@@ -1,0 +1,7 @@
+pyTelegramBotAPI
+smartapi-python
+logzero
+pyotp
+pandas
+apscheduler
+supabase
