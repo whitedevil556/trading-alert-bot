@@ -295,29 +295,33 @@ def handle_contact(message):
 print("🤖 'Trading Alert Bot' क्लाउडवर चालू झाला आहे!")
 bot.infinity_polling()
 #///////////////////////////////////////////////////////////////////////////////////////////////////////
+import os
 import threading
 from flask import Flask
 
-# 🌐 Render Free Web Service साठी वेब सर्व्हर
+# 🌐 Render Dynamic Port Binding साठी वेब सर्व्हर
 app = Flask(__name__)
 
 
 @app.route("/")
 def home():
-  return "Trading Bot is Live 24/7!"
+  return "Trading Bot is Active 24/7!"
 
 
 def run_flask():
-  app.run(host="0.0.0.0", port=10000)
+  # Render कडून मिळणारा Dynamic PORT वाचणे (Port Binding Fix)
+  port = int(os.environ.get("PORT", 10000))
+  app.run(host="0.0.0.0", port=port)
 
 
 # ==========================================
-# 🚀 बॉट आणि वेब सर्व्हर चालू करणे
+# 🚀 ६. बॉट आणि वेब सर्व्हर एकाच वेळी सुरू करणे
 # ==========================================
 if __name__ == "__main__":
-  # वेब सर्व्हर स्टार्ट करा
+  # वेब सर्व्हर बॅकग्राउंड थ्रेडमध्ये चालू करा
   t = threading.Thread(target=run_flask)
+  t.daemon = True
   t.start()
 
-  print("🤖 'Trading Alert Bot' क्लाउडवर चालू झाला आहे!")
+  print("🤖 'Trading Alert Bot' सर्व्हरवर चालू झाला आहे!")
   bot.infinity_polling()
