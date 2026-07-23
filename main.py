@@ -294,3 +294,30 @@ def handle_contact(message):
 # ==========================================
 print("🤖 'Trading Alert Bot' क्लाउडवर चालू झाला आहे!")
 bot.infinity_polling()
+#///////////////////////////////////////////////////////////////////////////////////////////////////////
+import threading
+from flask import Flask
+
+# 🌐 Render Free Web Service साठी वेब सर्व्हर
+app = Flask(__name__)
+
+
+@app.route("/")
+def home():
+  return "Trading Bot is Live 24/7!"
+
+
+def run_flask():
+  app.run(host="0.0.0.0", port=10000)
+
+
+# ==========================================
+# 🚀 बॉट आणि वेब सर्व्हर चालू करणे
+# ==========================================
+if __name__ == "__main__":
+  # वेब सर्व्हर स्टार्ट करा
+  t = threading.Thread(target=run_flask)
+  t.start()
+
+  print("🤖 'Trading Alert Bot' क्लाउडवर चालू झाला आहे!")
+  bot.infinity_polling()
