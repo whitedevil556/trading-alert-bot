@@ -1,14 +1,15 @@
 # 🟢 सर्व आवश्यक लायब्ररीज
+import os
+import time
+import datetime
+import threading
+from flask import Flask
 import telebot
-import logzero
+from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
 from SmartApi import SmartConnect
 from apscheduler.schedulers.background import BackgroundScheduler
 from supabase import create_client, Client
-import pandas as pd
-import datetime
 import pyotp
-import time
-from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
 
 # ==========================================
 # ⚙️ १. सर्व क्रेडेन्शियल्स
@@ -119,7 +120,7 @@ def send_scan_report(chat_id):
     bullish, bearish = get_angel_scan_results()
     
     if bullish is None:
-        bot.send_message(chat_id, "❌ अँगल वन सर्व्हरशी कनेक्ट होऊ शकलो नाही.")
+        bot.send_message(chat_id, "❌ अँगल वन सर्व्हरशी कनेक्ट होऊ शकलो नाही. API ची माहिती तपासा.")
         return
 
     if bullish:
@@ -142,7 +143,7 @@ def send_scan_report(chat_id):
 # ⏰ ४. ऑटो-अलर्ट शेड्यूलर (सकाळी ९:१६)
 # ==========================================
 def daily_auto_scan():
-    print("⏰ [Auto Scheduler] सकाळी ९:१६ वाजले आहेत - ऑटो-स्कॅन सुरू होत आहे...")
+    print("⏰ [Auto Scheduler] ऑटो-स्कॅन सुरू होत आहे...")
     subs = load_subscribers()
     if not subs:
         return
@@ -290,38 +291,31 @@ def handle_contact(message):
     bot.send_message(ADMIN_CHAT_ID, admin_msg, parse_mode="Markdown")
 
 # ==========================================
-# 🚀 ६. बॉट सुरू करणे
+# 🚀 ६. Flask Web Server (For Render) & Bot Start
 # ==========================================
-print("🤖 'Trading Alert Bot' क्लाउडवर चालू झाला आहे!")
-bot.infinity_polling()
-#///////////////////////////////////////////////////////////////////////////////////////////////////////
-import os
-import threading
-from flask import Flask
-
-# 🌐 Render Dynamic Port Binding साठी वेब सर्व्हर
 app = Flask(__name__)
-
 
 @app.route("/")
 def home():
-  return "Trading Bot is Active 24/7!"
+    return "Trading Bot is Live & Active 24/7!"
 
+def run_bot():
+    """टेलिग्राम बॉट बॅकग्राउंड थ्रेडवर चालवण्यासाठी"""
+    print("🤖 टेलिग्राम बॉट सुरू होत आहे...")
+    try:
+        bot.infinity_polling(timeout=10, long_polling_timeout=5)
+    except Exception as e:
+        print("Bot Polling Error:", e)
 
-def run_flask():
-  # Render कडून मिळणारा Dynamic PORT वाचणे (Port Binding Fix)
-  port = int(os.environ.get("PORT", 10000))
-  app.run(host="0.0.0.0", port=port)
-
-
-# ==========================================
-# 🚀 ६. बॉट आणि वेब सर्व्हर एकाच वेळी सुरू करणे
-# ==========================================
 if __name__ == "__main__":
-  # वेब सर्व्हर बॅकग्राउंड थ्रेडमध्ये चालू करा
-  t = threading.Thread(target=run_flask)
-  t.daemon = True 
-  t.start()
+    # १. बॉटला एका वेगळ्या (Daemon) थ्रेडवर सुरू करा 
+    # (यामुळे बॉट Render च्या पोर्ट बाइंडिंगमध्ये अडथळा आणणार नाही)
+    bot_thread = threading.Thread(target=run_bot)
+    bot_thread.daemon = True
+    bot_thread.start()
 
-  print("🤖 'Trading Alert Bot' सर्व्हरवर चालू झाला आहे!")
-  bot.infinity_polling()
+    # २. वेब सर्व्हर मुख्य थ्रेडवर सुरू करा (Render पोर्ट लगेच डिटेक्ट करेल)
+    # Render चा Dynamic PORT वाचणे
+    port = int(os.environ.get("PORT", 10000))
+    print(f"🌐 Flask वेब सर्व्हर पोर्ट {port} वर सुरू होत आहे...")
+    app.run(host="0.0.0.0", port=port)
