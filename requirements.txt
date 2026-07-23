@@ -1,8 +1,11 @@
 pyTelegramBotAPI
 smartapi-python
+websocket-client
 logzero
 pyotp
 pandas
 apscheduler
 supabase
 flask
+gunicorn
+requests
