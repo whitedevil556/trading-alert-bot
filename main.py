@@ -320,7 +320,7 @@ def run_flask():
 if __name__ == "__main__":
   # वेब सर्व्हर बॅकग्राउंड थ्रेडमध्ये चालू करा
   t = threading.Thread(target=run_flask)
-  t.daemon = True
+  t.daemon = True 
   t.start()
 
   print("🤖 'Trading Alert Bot' सर्व्हरवर चालू झाला आहे!")
