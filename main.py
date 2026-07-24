@@ -15,6 +15,9 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from supabase import create_client, Client
 import pyotp
 
+# 🌟 NEW ADDITION: EOD Scanner फाईल इम्पोर्ट केली
+from eod_momentum_scanner import get_eod_momentum_stocks
+
 # ==========================================
 # ⚙️ २. सर्व क्रेडेन्शियल्स
 # ==========================================
@@ -519,11 +522,16 @@ def get_main_keyboard():
     markup.row_width = 2
     btn1 = InlineKeyboardButton("📊 आत्ता स्कॅन करा (O=L)", callback_data="scan_now")
     btn5 = InlineKeyboardButton("🔥 Setup 2", callback_data="setup_2")
+    
+    # 🌟 NEW ADDITION: EOD Scanner चे नवीन बटण
+    btn_eod = InlineKeyboardButton("🎯 Next Day Stocks (EOD)", callback_data="scan_eod") 
+    
     btn2 = InlineKeyboardButton("⏰ डेली ऑटो-अलर्ट", callback_data="subscribe")
     btn3 = InlineKeyboardButton("📈 स्ट्रॅटेजी माहिती", callback_data="strategy")
     btn4 = InlineKeyboardButton("📞 सपोर्ट / ॲडमिन", callback_data="support")
     
     markup.add(btn1, btn5)
+    markup.add(btn_eod)  # इथे आपण ते बटण ॲड केले आहे
     markup.add(btn2, btn3)
     markup.add(btn4)
     return markup
@@ -628,6 +636,27 @@ def callback_query(call):
 
         send_setup2_report_to_user(chat_id, force_refresh=True)
 
+    # 🌟 NEW ADDITION: EOD Scanner चे कॉलबॅक लॉजिक
+    elif call.data == "scan_eod":
+        # युजरला वाट पाहायला मेसेज पाठवा
+        bot.edit_message_text(
+            "⏳ **EOD Squeeze Scanner चालू आहे...**\n*इन्स्टिट्यूशनल फूटप्रिंट्स शोधत आहे, कृपया ४०-५० सेकंद वाट पहा...*", 
+            call.message.chat.id, 
+            call.message.message_id, 
+            parse_mode="Markdown"
+        )
+        
+        # नवीन फाईलमधील स्कॅनर फंक्शन कॉल करा
+        eod_report = get_eod_momentum_stocks(
+            api_key=ANGEL_API_KEY, 
+            client_id=ANGEL_CLIENT_ID, 
+            password=ANGEL_PASSWORD, 
+            totp_key=ANGEL_TOTP_KEY
+        )
+        
+        # फायनल EOD रिपोर्ट टेलिग्रामवर पाठवा
+        bot.send_message(chat_id, eod_report, parse_mode="Markdown")
+
     elif call.data == "subscribe":
         markup = ReplyKeyboardMarkup(one_time_keyboard=True, resize_keyboard=True)
         btn = KeyboardButton("📱 मोबाईल नंबर शेअर करा", request_contact=True)
@@ -644,7 +673,8 @@ def callback_query(call):
         text = (
             "📚 *आपल्या स्ट्रॅटेजीज:*\n\n"
             "🟢 **O=L / O=H:** Open आणि Low समान असल्यास Buy, High समान असल्यास Sell.\n\n"
-            "🔥 **Setup 2:** पहिल्या ५-मिनिट कॅन्डलच्या झोनमध्ये दुसरी कॅन्डल क्लोज झाली की **'READY'** अलर्ट मिळतो. आणि त्याचा हाय/लो ब्रेक झाला की **'BUY/SELL'** सिग्नल मिळतो!"
+            "🔥 **Setup 2:** पहिल्या ५-मिनिट कॅन्डलच्या झोनमध्ये दुसरी कॅन्डल क्लोज झाली की **'READY'** अलर्ट मिळतो. आणि त्याचा हाय/लो ब्रेक झाला की **'BUY/SELL'** सिग्नल मिळतो!\n\n"
+            "🎯 **Next Day (EOD):** Squeeze आणि Institutional फुटप्रिंट शोधून उद्यासाठी जॅकपॉट स्टॉक्स शोधतो."
         )
         bot.send_message(chat_id, text, parse_mode="Markdown")
         
