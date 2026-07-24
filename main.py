@@ -125,6 +125,7 @@ def get_angel_scan_results(interval="FIVE_MINUTE", from_time="09:15", to_time="0
 
     for symbol, token in NIFTY_STOCKS_ANGEL.items():
         try:
+            time.sleep(0.3)  # 👈 ही ओळ (Rate Limit थांबवण्यासाठी)
             historicParam = {
                 "exchange": "NSE",
                 "symboltoken": token,
