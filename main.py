@@ -27,8 +27,31 @@ ANGEL_TOTP_KEY = "KU4BY7F74REXTA7T2BKFINN55E"
 SUPABASE_URL = "https://nithcddmdlzudauvcoxy.supabase.co"
 SUPABASE_KEY = "sb_publishable_KuHxRULppKuRsJgvbRssBA_mwoFxqtd"
 
+# 🟢 Global Alert Switch (Default: True)
+AUTO_ALERTS_ENABLED = True
+
 bot = telebot.TeleBot(TELEGRAM_TOKEN)
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+
+# ==========================================
+# ⏰ मार्केट टाइमिंग चेकर (सुधारित मेसेज)
+# ==========================================
+def is_market_ready_for_scan():
+    """मध्यरात्री १२ ते सकाळी ९:१६ दरम्यान मॅन्युअल स्कॅन रोखण्यासाठी चेकर"""
+    IST = datetime.timezone(datetime.timedelta(hours=5, minutes=30))
+    now_ist = datetime.datetime.now(IST)
+    
+    # १. शनिवार (5) किंवा रविवार (6) चेक
+    if now_ist.weekday() in [5, 6]:
+        return False, "🏖️ **आज शनिवार/रविवार असल्यामुळे मार्केट बंद आहे.**\n\nसोमवारी सकाळी ९:१६ नंतर पुन्हा स्कॅन करा!"
+    
+    time_str = now_ist.strftime("%H:%M")
+    
+    # २. मध्यरात्री १२:०० ते सकाळी ९:१५ पर्यंत चेक
+    if time_str < "09:16":
+        return False, "⏰ **आजचे मार्केट अजून सुरू झालेले नाही!**\n\nमार्केट सकाळी ९:१५ ला सुरू होते.\n\nकृपया **सकाळी ९:१६ नंतर** पुन्हा स्कॅन बटणावर क्लिक करा! 📈"
+        
+    return True, ""
 
 # ==========================================
 # 📂 २. युजर डेटा मॅनेजमेंट (Supabase Database)
@@ -65,29 +88,22 @@ def save_subscriber(chat_id, name, phone):
         return 0
 
 # ==========================================
-# 📈 ३. अँगल वन स्कॅनर इंजिन
+# 📈 ३. अँगल वन स्कॅनर इंजिन - १ (Open = Low / Open = High)
 # ==========================================
-def scan_setup_2():
+def get_angel_scan_results(interval="FIVE_MINUTE", from_time="09:15", to_time="09:20"):
     obj = SmartConnect(api_key=ANGEL_API_KEY)
     try:
         totp = pyotp.TOTP(ANGEL_TOTP_KEY).now() if ANGEL_TOTP_KEY else ""
         login_data = obj.generateSession(ANGEL_CLIENT_ID, ANGEL_PASSWORD, totp)
         if not (login_data and login_data.get('status')):
-            return "❌ API Login Failed"
+            return None, None
     except Exception:
-        return "❌ API Exception"
+        return None, None
 
-    # 📊 निफ्टी ५० आणि बँकनिफ्टीचे सर्व महत्वाचे स्टॉक्स (with Tokens)
-    WATCHLIST = {
-        'NIFTY 50': '26000', 
-        'BANKNIFTY': '26009',
-        
-        # Bank Nifty Stocks
+    NIFTY_STOCKS_ANGEL = {
         'HDFCBANK': '1333', 'ICICIBANK': '4963', 'AXISBANK': '5900', 'SBIN': '3045', 
         'KOTAKBANK': '1922', 'INDUSINDBK': '5258', 'AUBANK': '21238', 'BANDHANBNK': '2263', 
         'FEDERALBNK': '1023', 'IDFCFIRSTB': '11184', 'PNB': '10666', 'BOB': '4668',
-        
-        # Nifty 50 Stocks
         'RELIANCE': '2885', 'INFY': '1594', 'TCS': '11536', 'ITC': '1660', 'LT': '11483', 
         'BHARTIARTL': '10604', 'TATAMOTORS': '3456', 'M&M': '2031', 'NTPC': '11630', 
         'TITAN': '3506', 'HCLTECH': '7229', 'SUNPHARMA': '3351', 'MARUTI': '10999', 
@@ -101,8 +117,8 @@ def scan_setup_2():
     }
 
     today_str = datetime.date.today().strftime('%Y-%m-%d')
-    from_date_time = f"{today_str} 09:15"
-    to_date_time = f"{today_str} 09:20"
+    from_date_time = f"{today_str} {from_time}"
+    to_date_time = f"{today_str} {to_time}"
 
     bullish_stocks = []
     bearish_stocks = []
@@ -112,7 +128,7 @@ def scan_setup_2():
             historicParam = {
                 "exchange": "NSE",
                 "symboltoken": token,
-                "interval": "FIVE_MINUTE",
+                "interval": interval,
                 "fromdate": from_date_time,
                 "todate": to_date_time
             }
@@ -156,19 +172,157 @@ def send_scan_report(chat_id):
         bot.send_message(chat_id, "🔴 **BEARISH:** आज एकही परफेक्ट O=H स्टॉक सापडला नाही.", parse_mode="Markdown")
 
 # ==========================================
-# ⏰ ४. ऑटो-अलर्ट शेड्यूलर (सकाळी ९:१६)
+# 🧠 ७. अँगल वन स्कॅनर इंजिन - २ (Setup 2 - 50% Body Rule)
 # ==========================================
-def daily_auto_scan():
-    print("⏰ [Auto Scheduler] ऑटो-स्कॅन सुरू होत आहे...")
+def scan_setup_2():
+    obj = SmartConnect(api_key=ANGEL_API_KEY)
+    try:
+        totp = pyotp.TOTP(ANGEL_TOTP_KEY).now() if ANGEL_TOTP_KEY else ""
+        login_data = obj.generateSession(ANGEL_CLIENT_ID, ANGEL_PASSWORD, totp)
+        if not (login_data and login_data.get('status')):
+            return "❌ API Login Failed"
+    except Exception:
+        return "❌ API Exception"
+
+    WATCHLIST = {
+        'NIFTY 50': '26000', 
+        'BANKNIFTY': '26009',
+        'HDFCBANK': '1333', 'ICICIBANK': '4963', 'AXISBANK': '5900', 'SBIN': '3045', 
+        'KOTAKBANK': '1922', 'INDUSINDBK': '5258', 'AUBANK': '21238', 'BANDHANBNK': '2263', 
+        'FEDERALBNK': '1023', 'IDFCFIRSTB': '11184', 'PNB': '10666', 'BOB': '4668',
+        'RELIANCE': '2885', 'INFY': '1594', 'TCS': '11536', 'ITC': '1660', 'LT': '11483', 
+        'BHARTIARTL': '10604', 'TATAMOTORS': '3456', 'M&M': '2031', 'NTPC': '11630', 
+        'TITAN': '3506', 'HCLTECH': '7229', 'SUNPHARMA': '3351', 'MARUTI': '10999', 
+        'ULTRACEMCO': '11532', 'ASIANPAINT': '236', 'BAJFINANCE': '317', 'BAJAJFINSV': '16675', 
+        'HINDUNILVR': '1394', 'WIPRO': '3787', 'TATASTEEL': '3499', 'POWERGRID': '14977', 
+        'BAJAJ-AUTO': '16669', 'TECHM': '13538', 'HINDALCO': '1363', 'GRASIM': '1232', 
+        'ONGC': '2475', 'ADANIENT': '25', 'ADANIPORTS': '15083', 'COALINDIA': '20374', 
+        'BPCL': '526', 'BRITANNIA': '547', 'DRREDDY': '881', 'EICHERMOT': '910', 
+        'DIVISLAB': '10940', 'APOLLOHOSP': '157', 'HEROMOTOCO': '1348', 'CIPLA': '694', 
+        'HDFCLIFE': '467', 'SBILIFE': '21808', 'TATACONSUM': '3432', 'JSWSTEEL': '11723'
+    }
+
+    today_str = datetime.date.today().strftime('%Y-%m-%d')
+    now_time = datetime.datetime.now().strftime('%H:%M')
+    
+    from_date_time = f"{today_str} 09:15"
+    to_date_time = f"{today_str} {now_time}"
+
+    report_text = f"🔥 **Setup 2 (50% Rule) - Live Radar** 🔥\n🕒 Timeframe: 5 Min\n\n"
+    found_setups = 0
+
+    for symbol, token in WATCHLIST.items():
+        try:
+            time.sleep(0.3)
+
+            historicParam = {
+                "exchange": "NSE",
+                "symboltoken": token,
+                "interval": "FIVE_MINUTE",
+                "fromdate": from_date_time,
+                "todate": to_date_time
+            }
+            resp = obj.getCandleData(historicParam)
+            if not resp or 'data' not in resp or len(resp['data']) < 2:
+                continue
+            
+            data = resp['data']
+            
+            f_candle = data[0]
+            f_open, f_high, f_low, f_close = float(f_candle[1]), float(f_candle[2]), float(f_candle[3]), float(f_candle[4])
+            
+            f_range = f_high - f_low
+            f_mid = f_low + (f_range * 0.50)
+            
+            is_bullish_first = f_close >= f_open
+            is_bearish_first = f_close < f_open
+            
+            setup_active = True
+            daily_signal_fired = False
+            inside_count = 0
+            trigger_high = f_high
+            trigger_low = f_low
+            
+            status_msg = ""
+            is_interesting = False
+
+            for i in range(1, len(data)):
+                if not setup_active or daily_signal_fired:
+                    break
+                    
+                c_candle = data[i]
+                c_time = c_candle[0].split("T")[1][:5]
+                c_open, c_high, c_low, c_close = float(c_candle[1]), float(c_candle[2]), float(c_candle[3]), float(c_candle[4])
+                
+                if inside_count >= 1:
+                    if is_bullish_first and c_high > trigger_high:
+                        status_msg = f"🚀 **BUY Triggered** @ {c_time} (> ₹{trigger_high:.2f})"
+                        daily_signal_fired = True
+                        is_interesting = True
+                        break
+                    elif is_bearish_first and c_low < trigger_low:
+                        status_msg = f"🩸 **SELL Triggered** @ {c_time} (< ₹{trigger_low:.2f})"
+                        daily_signal_fired = True
+                        is_interesting = True
+                        break
+
+                body_max = max(c_open, c_close)
+                body_min = min(c_open, c_close)
+                
+                body_in_upper_half = (body_min >= f_mid) and (body_max <= f_high)
+                body_in_lower_half = (body_max <= f_mid) and (body_min >= f_low)
+                
+                is_inside_valid = (is_bullish_first and body_in_upper_half) or (is_bearish_first and body_in_lower_half)
+                small_body = abs(c_close - c_open) <= (f_range * 0.50)
+                
+                if is_inside_valid and small_body:
+                    inside_count += 1
+                    trigger_high = max(trigger_high, c_high)
+                    trigger_low = min(trigger_low, c_low)
+                    
+                    status_msg = f"⚠️ **READY** (Watch H: ₹{trigger_high:.2f} / L: ₹{trigger_low:.2f})"
+                    is_interesting = True
+                    
+                    if inside_count > 6:
+                        setup_active = False
+                        is_interesting = False
+                else:
+                    setup_active = False
+                    is_interesting = False
+            
+            if is_interesting:
+                report_text += f"🔸 **{symbol}:** {status_msg}\n"
+                found_setups += 1
+            
+        except Exception:
+            continue
+            
+    if found_setups == 0:
+        report_text += "⚪ सध्या कोणत्याही स्टॉकमध्ये 'Setup 2' बनलेला नाही."
+        
+    return report_text
+
+# ==========================================
+# ⏰ ४. ऑटो-अलर्ट शेड्यूलर (सकाळी ९:१६ आणि ९:२१)
+# ==========================================
+def send_auto_scan_job(title_prefix, interval_type, from_t, to_t):
+    """सर्व सबस्क्रायबर्सना ऑटो-अलर्ट पाठवण्यासाठीचे मुख्य फंक्शन"""
+    global AUTO_ALERTS_ENABLED
+    
+    if not AUTO_ALERTS_ENABLED:
+        bot.send_message(ADMIN_CHAT_ID, f"⏸️ **[Auto Scan Skipped]** ऑटो-अलर्ट्स अ‍ॅडमिनने बंद ठेवले आहेत.")
+        return
+
     subs = load_subscribers()
     if not subs:
         return
 
-    bullish, bearish = get_angel_scan_results()
+    bullish, bearish = get_angel_scan_results(interval=interval_type, from_time=from_t, to_time=to_t)
     if bullish is None:
+        bot.send_message(ADMIN_CHAT_ID, f"❌ **[{title_prefix} Error]** अँगल वन डेटा फेच करू शकलो नाही.")
         return
 
-    msg_bullish = f"⏰ **सकाळचा ऑटो-अलर्ट 📊**\n\n🟢 **BULLISH (Open = Low) - {len(bullish)} Stocks:**\n"
+    msg_bullish = f"⏰ **{title_prefix} 📊**\n\n🟢 **BULLISH (Open = Low) - {len(bullish)} Stocks:**\n"
     if bullish:
         for item in bullish:
             msg_bullish += f"• **{item['symbol']}** (₹{item['open']:.2f})\n"
@@ -184,20 +338,48 @@ def daily_auto_scan():
 
     full_report = msg_bullish + msg_bearish
 
+    sent_count = 0
     for chat_id in subs.keys():
         try:
             bot.send_message(chat_id, full_report, parse_mode="Markdown")
-            time.sleep(0.5)
+            sent_count += 1
+            time.sleep(0.3)
         except Exception:
             continue
 
+    bot.send_message(ADMIN_CHAT_ID, f"✅ **[{title_prefix} Complete]** {sent_count} सबस्क्रायबर्सना अलर्ट पाठवला!")
+
+# ⚡ १. ९:१६ AM - १-मिनिट फास्ट अलर्ट (Fast Entry)
+def scan_916_early():
+    send_auto_scan_job("⚡ फास्ट ऑटो-अलर्ट (९:१६ AM)", "ONE_MINUTE", "09:15", "09:16")
+
+# 📊 २. ९:२१ AM - ५-मिनिट कन्फर्म अलर्ट (Confirmed Entry)
+def scan_921_confirmed():
+    send_auto_scan_job("📊 ५-मिनिट ऑटो-अलर्ट (९:२१ AM)", "FIVE_MINUTE", "09:15", "09:20")
+
+# शेड्यूलर सेटअप
 scheduler = BackgroundScheduler(timezone="Asia/Kolkata")
-scheduler.add_job(daily_auto_scan, 'cron', day_of_week='mon-fri', hour=9, minute=16)
+scheduler.add_job(scan_916_early, 'cron', day_of_week='mon-fri', hour=9, minute=16)
+scheduler.add_job(scan_921_confirmed, 'cron', day_of_week='mon-fri', hour=9, minute=21)
 scheduler.start()
 
 # ==========================================
-# 🤖 ५. टेलिग्राम कमांड्स
+# 🤖 ५. टेलिग्राम कमांड्स व अ‍ॅडमिन कस्टमायझेशन
 # ==========================================
+def get_main_keyboard():
+    markup = InlineKeyboardMarkup()
+    markup.row_width = 2
+    btn1 = InlineKeyboardButton("📊 आत्ता स्कॅन करा (O=L)", callback_data="scan_now")
+    btn5 = InlineKeyboardButton("🔥 Setup 2 (50% Rule)", callback_data="setup_2")
+    btn2 = InlineKeyboardButton("⏰ डेली ऑटो-अलर्ट", callback_data="subscribe")
+    btn3 = InlineKeyboardButton("📈 स्ट्रॅटेजी माहिती", callback_data="strategy")
+    btn4 = InlineKeyboardButton("📞 सपोर्ट / ॲडमिन", callback_data="support")
+    
+    markup.add(btn1, btn5)
+    markup.add(btn2, btn3)
+    markup.add(btn4)
+    return markup
+
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
     welcome_text = (
@@ -205,15 +387,22 @@ def send_welcome(message):
         "मी तुमचा वैयक्तिक **Trading Alert Bot** आहे.\n"
         "खालील पर्यायांपैकी एक निवडा:"
     )
-    markup = InlineKeyboardMarkup()
-    markup.row_width = 2
-    btn1 = InlineKeyboardButton("📊 आत्ता स्कॅन करा", callback_data="scan_now")
-    btn2 = InlineKeyboardButton("⏰ डेली ऑटो-अलर्ट", callback_data="subscribe")
-    btn3 = InlineKeyboardButton("📈 स्ट्रॅटेजी माहिती", callback_data="strategy")
-    btn4 = InlineKeyboardButton("📞 सपोर्ट / ॲडमिन", callback_data="support")
-    
-    markup.add(btn1, btn2, btn3, btn4)
-    bot.send_message(message.chat.id, welcome_text, parse_mode="Markdown", reply_markup=markup)
+    bot.send_message(message.chat.id, welcome_text, parse_mode="Markdown", reply_markup=get_main_keyboard())
+
+# 🔴 अ‍ॅडमिन अलर्ट चालू/बंद कमांड्स
+@bot.message_handler(commands=['alerts_off'])
+def disable_alerts(message):
+    global AUTO_ALERTS_ENABLED
+    if str(message.chat.id) == str(ADMIN_CHAT_ID):
+        AUTO_ALERTS_ENABLED = False
+        bot.send_message(ADMIN_CHAT_ID, "🔴 **ऑटो-अलर्ट्स यशस्वीपणे बंद (DISABLED) केले आहेत!**\nआता ९:१६ आणि ९:२१ ला सबस्क्रायबर्सना ऑटो-मेसेज जाणार नाहीत.")
+
+@bot.message_handler(commands=['alerts_on'])
+def enable_alerts(message):
+    global AUTO_ALERTS_ENABLED
+    if str(message.chat.id) == str(ADMIN_CHAT_ID):
+        AUTO_ALERTS_ENABLED = True
+        bot.send_message(ADMIN_CHAT_ID, "🟢 **ऑटो-अलर्ट्स यशस्वीपणे सुरू (ENABLED) केले आहेत!**\nआता ९:१६ आणि ९:२१ ला सबस्क्रायबर्सना ऑटो-मेसेज पाठवले जातील.")
 
 @bot.message_handler(commands=['users'])
 def show_users(message):
@@ -223,7 +412,9 @@ def show_users(message):
             bot.send_message(message.chat.id, "ℹ️ सध्या एकही सबस्क्रायबर नाही.")
             return
 
-        text = f"📊 **एकूण सबस्क्रायबर्स यादी ({len(subs)} Users):**\n\n"
+        status_str = "🟢 चालू (ACTIVE)" if AUTO_ALERTS_ENABLED else "🔴 बंद (DISABLED)"
+        text = f"📊 **एकूण सबस्क्रायबर्स यादी ({len(subs)} Users):**\n"
+        text += f"🔔 **ऑटो-अलर्ट स्टेटस:** {status_str}\n\n"
         for i, (cid, data) in enumerate(subs.items(), 1):
             text += f"{i}. **{data['name']}** - `{data['phone']}` ({data['date']})\n"
 
@@ -234,7 +425,7 @@ def broadcast_message(message):
     if str(message.chat.id) == str(ADMIN_CHAT_ID):
         msg_text = message.text.replace('/broadcast', '').strip()
         if not msg_text:
-            bot.send_message(ADMIN_CHAT_ID, "⚠️ मेसेज टाईप करा. उदा: `/broadcast आज मार्केट सुट्टीमुळे बंद आहे.`", parse_mode="Markdown")
+            bot.send_message(ADMIN_CHAT_ID, "⚠️ मेसेज टाईप करा. उदा: `/broadcast आज मार्केट बंद आहे.`", parse_mode="Markdown")
             return
 
         subs = load_subscribers()
@@ -247,15 +438,32 @@ def broadcast_message(message):
             except Exception:
                 continue
 
-        bot.send_message(ADMIN_CHAT_ID, f"✅ **ब्रॉडकास्ट पूर्ण!** {sent_count} युजर्सना मेसेज पाठवला आहे.", parse_mode="Markdown")
+        bot.send_message(ADMIN_CHAT_ID, f"✅ **ब्रॉडकास्ट पूर्ण!** {sent_count} युजर्सना मेसेज पाठवला.", parse_mode="Markdown")
 
 @bot.callback_query_handler(func=lambda call: True)
 def callback_query(call):
     chat_id = call.message.chat.id
     
     if call.data == "scan_now":
-        bot.send_message(chat_id, "⏳ *स्कॅन सुरू आहे, कृपया ३०-४० सेकंद थांबा...*", parse_mode="Markdown")
+        # 🟢 मार्केट उघडले आहे का ते आधी तपासा
+        is_ready, alert_msg = is_market_ready_for_scan()
+        if not is_ready:
+            bot.send_message(chat_id, alert_msg, parse_mode="Markdown")
+            return
+            
+        bot.send_message(chat_id, "⏳ *O=L/O=H स्कॅन सुरू आहे, कृपया थांबा...*", parse_mode="Markdown")
         send_scan_report(chat_id)
+        
+    elif call.data == "setup_2":
+        # 🟢 मार्केट उघडले आहे का ते आधी तपासा
+        is_ready, alert_msg = is_market_ready_for_scan()
+        if not is_ready:
+            bot.send_message(chat_id, alert_msg, parse_mode="Markdown")
+            return
+
+        bot.send_message(chat_id, "🔍 *Setup 2 स्कॅन करत आहे (Nifty, BankNifty & Stocks)... कृपया १५-२० सेकंद थांबा...*", parse_mode="Markdown")
+        setup2_result = scan_setup_2()
+        bot.send_message(chat_id, setup2_result, parse_mode="Markdown")
         
     elif call.data == "subscribe":
         markup = ReplyKeyboardMarkup(one_time_keyboard=True, resize_keyboard=True)
@@ -271,9 +479,9 @@ def callback_query(call):
         
     elif call.data == "strategy":
         text = (
-            "📚 *Open = Low / Open = High स्ट्रॅटेजी नियम:*\n\n"
-            "🟢 **BULLISH (O=L):** Open आणि Low समान असल्यास Buy करा.\n"
-            "🔴 **BEARISH (O=H):** Open आणि High समान असल्यास Sell करा."
+            "📚 *आपल्या स्ट्रॅटेजीज:*\n\n"
+            "🟢 **O=L / O=H:** Open आणि Low समान असल्यास Buy, High समान असल्यास Sell.\n\n"
+            "🔥 **Setup 2 (Pro):** पहिल्या ५-मिनिट कॅन्डलच्या ५०% झोनमध्ये दुसरी कॅन्डल क्लोज झाली की **'READY'** अलर्ट मिळतो. आणि त्याचा हाय/लो ब्रेक झाला की **'BUY/SELL'** सिग्नल!"
         )
         bot.send_message(chat_id, text, parse_mode="Markdown")
         
@@ -292,7 +500,7 @@ def handle_contact(message):
     remove_kb = ReplyKeyboardRemove()
     bot.send_message(
         chat_id, 
-        f"✅ **धन्यवाद {name}!**\nतुमचा नंबर (`{phone}`) यशस्वीपणे रजिस्टर झाला आहे. तुम्हाला रोज सकाळी ९:१६ वाजता ऑटो-अलर्ट मिळतील.", 
+        f"✅ **धन्यवाद {name}!**\nतुमचा नंबर (`{phone}`) यशस्वीपणे रजिस्टर झाला आहे. तुम्हाला रोज सकाळी ९:१६ आणि ९:२१ वाजता ऑटो-अलर्ट मिळतील.", 
         parse_mode="Markdown", 
         reply_markup=remove_kb
     )
@@ -319,19 +527,10 @@ def handle_all_other_messages(message):
         "मी तुमचा **Trading Alert Bot** आहे. मदत हवी असल्यास खालील बटणांवर क्लिक करा:"
     )
 
-    markup = InlineKeyboardMarkup()
-    markup.row_width = 2
-    btn1 = InlineKeyboardButton("📊 आत्ता स्कॅन करा", callback_data="scan_now")
-    btn2 = InlineKeyboardButton("⏰ डेली ऑटो-अलर्ट", callback_data="subscribe")
-    btn3 = InlineKeyboardButton("📈 स्ट्रॅटेजी माहिती", callback_data="strategy")
-    btn4 = InlineKeyboardButton("📞 सपोर्ट / ॲडमिन", callback_data="support")
-
-    markup.add(btn1, btn2, btn3, btn4)
-    bot.send_message(chat_id, text, parse_mode="Markdown", reply_markup=markup)
-
+    bot.send_message(chat_id, text, parse_mode="Markdown", reply_markup=get_main_keyboard())
 
 # ==========================================
-# 🚀 ६. Flask Web Server (For Render) & Bot Start
+# 🚀 ६. Flask Web Server & Bot Start
 # ==========================================
 app = Flask(__name__)
 
@@ -340,7 +539,6 @@ def home():
     return "Trading Bot is Live & Active 24/7!"
 
 def run_bot():
-    """टेलिग्राम बॉट बॅकग्राउंड थ्रेडवर चालवण्यासाठी"""
     print("🤖 टेलिग्राम बॉट सुरू होत आहे...")
     try:
         bot.infinity_polling(timeout=10, long_polling_timeout=5)
@@ -348,14 +546,10 @@ def run_bot():
         print("Bot Polling Error:", e)
 
 if __name__ == "__main__":
-    # १. बॉटला एका वेगळ्या (Daemon) थ्रेडवर सुरू करा 
-    # (यामुळे बॉट Render च्या पोर्ट बाइंडिंगमध्ये अडथळा आणणार नाही)
     bot_thread = threading.Thread(target=run_bot)
     bot_thread.daemon = True
     bot_thread.start()
 
-    # २. वेब सर्व्हर मुख्य थ्रेडवर सुरू करा (Render पोर्ट लगेच डिटेक्ट करेल)
-    # Render चा Dynamic PORT वाचणे
     port = int(os.environ.get("PORT", 10000))
     print(f"🌐 Flask वेब सर्व्हर पोर्ट {port} वर सुरू होत आहे...")
     app.run(host="0.0.0.0", port=port)
