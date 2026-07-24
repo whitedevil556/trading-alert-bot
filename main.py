@@ -34,20 +34,18 @@ bot = telebot.TeleBot(TELEGRAM_TOKEN)
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 # ==========================================
-# ⏰ मार्केट टाइमिंग चेकर (सुधारित मेसेज)
+# ⏰ मार्केट टाइमिंग चेकर
 # ==========================================
 def is_market_ready_for_scan():
     """मध्यरात्री १२ ते सकाळी ९:१६ दरम्यान मॅन्युअल स्कॅन रोखण्यासाठी चेकर"""
     IST = datetime.timezone(datetime.timedelta(hours=5, minutes=30))
     now_ist = datetime.datetime.now(IST)
     
-    # १. शनिवार (5) किंवा रविवार (6) चेक
     if now_ist.weekday() in [5, 6]:
         return False, "🏖️ **आज शनिवार/रविवार असल्यामुळे मार्केट बंद आहे.**\n\nसोमवारी सकाळी ९:१६ नंतर पुन्हा स्कॅन करा!"
     
     time_str = now_ist.strftime("%H:%M")
     
-    # २. मध्यरात्री १२:०० ते सकाळी ९:१५ पर्यंत चेक
     if time_str < "09:16":
         return False, "⏰ **आजचे मार्केट अजून सुरू झालेले नाही!**\n\nमार्केट सकाळी ९:१५ ला सुरू होते.\n\nकृपया **सकाळी ९:१६ नंतर** पुन्हा स्कॅन बटणावर क्लिक करा! 📈"
         
@@ -125,7 +123,7 @@ def get_angel_scan_results(interval="FIVE_MINUTE", from_time="09:15", to_time="0
 
     for symbol, token in NIFTY_STOCKS_ANGEL.items():
         try:
-            time.sleep(0.4)  # 👈 ही ओळ (Rate Limit थांबवण्यासाठी)
+            time.sleep(0.5)  # 👈 0.5 Sec Delay (No missing stocks)
             historicParam = {
                 "exchange": "NSE",
                 "symboltoken": token,
@@ -150,27 +148,37 @@ def get_angel_scan_results(interval="FIVE_MINUTE", from_time="09:15", to_time="0
     return bullish_stocks, bearish_stocks
 
 def send_scan_report(chat_id):
-    bullish, bearish = get_angel_scan_results()
+    IST = datetime.timezone(datetime.timedelta(hours=5, minutes=30))
+    now_ist = datetime.datetime.now(IST)
+    now_time = now_ist.strftime("%H:%M")
+
+    # 🟢 स्मार्ट स्कॅनर: वेळेनुसार 1-Min किंवा 5-Min डेटा घेईल
+    if now_time < "09:21":
+        bullish, bearish = get_angel_scan_results(interval="ONE_MINUTE", from_time="09:15", to_time="09:16")
+        time_title = "१-मिनिट कॅन्डल"
+    else:
+        bullish, bearish = get_angel_scan_results(interval="FIVE_MINUTE", from_time="09:15", to_time="09:20")
+        time_title = "५-मिनिट कॅन्डल"
     
     if bullish is None:
         bot.send_message(chat_id, "❌ अँगल वन सर्व्हरशी कनेक्ट होऊ शकलो नाही. API ची माहिती तपासा.")
         return
 
     if bullish:
-        msg_bullish = f"🟢 **BULLISH STOCKS (Open = Low)** 🟢\n*Total: {len(bullish)} Stocks*\n\n"
+        msg_bullish = f"🟢 **BULLISH STOCKS (Open = Low)** 🟢\n🕒 {time_title} | *Total: {len(bullish)} Stocks*\n\n"
         for item in bullish:
             msg_bullish += f"🚀 **{item['symbol']}** (O/L: ₹{item['open']:.2f} | H: ₹{item['high']:.2f})\n"
         bot.send_message(chat_id, msg_bullish, parse_mode="Markdown")
     else:
-        bot.send_message(chat_id, "🟢 **BULLISH:** आज एकही परफेक्ट O=L स्टॉक सापडला नाही.", parse_mode="Markdown")
+        bot.send_message(chat_id, f"🟢 **BULLISH:** आज एकही परफेक्ट O=L स्टॉक सापडला नाही ({time_title}).", parse_mode="Markdown")
 
     if bearish:
-        msg_bearish = f"🔴 **BEARISH STOCKS (Open = High)** 🔴\n*Total: {len(bearish)} Stocks*\n\n"
+        msg_bearish = f"🔴 **BEARISH STOCKS (Open = High)** 🔴\n🕒 {time_title} | *Total: {len(bearish)} Stocks*\n\n"
         for item in bearish:
             msg_bearish += f"🩸 **{item['symbol']}** (O/H: ₹{item['open']:.2f} | L: ₹{item['low']:.2f})\n"
         bot.send_message(chat_id, msg_bearish, parse_mode="Markdown")
     else:
-        bot.send_message(chat_id, "🔴 **BEARISH:** आज एकही परफेक्ट O=H स्टॉक सापडला नाही.", parse_mode="Markdown")
+        bot.send_message(chat_id, f"🔴 **BEARISH:** आज एकही परफेक्ट O=H स्टॉक सापडला नाही ({time_title}).", parse_mode="Markdown")
 
 # ==========================================
 # 🧠 ७. अँगल वन स्कॅनर इंजिन - २ (Setup 2 - 50% Body Rule)
@@ -214,7 +222,7 @@ def scan_setup_2():
 
     for symbol, token in WATCHLIST.items():
         try:
-            time.sleep(0.4)
+            time.sleep(0.5)
 
             historicParam = {
                 "exchange": "NSE",
@@ -307,7 +315,6 @@ def scan_setup_2():
 # ⏰ ४. ऑटो-अलर्ट शेड्यूलर (सकाळी ९:१६ आणि ९:२१)
 # ==========================================
 def send_auto_scan_job(title_prefix, interval_type, from_t, to_t):
-    """सर्व सबस्क्रायबर्सना ऑटो-अलर्ट पाठवण्यासाठीचे मुख्य फंक्शन"""
     global AUTO_ALERTS_ENABLED
     
     if not AUTO_ALERTS_ENABLED:
@@ -350,18 +357,16 @@ def send_auto_scan_job(title_prefix, interval_type, from_t, to_t):
 
     bot.send_message(ADMIN_CHAT_ID, f"✅ **[{title_prefix} Complete]** {sent_count} सबस्क्रायबर्सना अलर्ट पाठवला!")
 
-# ⚡ १. ९:१६ AM - १-मिनिट फास्ट अलर्ट (Fast Entry)
 def scan_916_early():
-    send_auto_scan_job("⚡ फास्ट ऑटो-अलर्ट (९:१६ AM)", "ONE_MINUTE", "09:15", "09:16")
+    send_auto_scan_job("⚡ फास्ट ऑटो-अलर्ट (१-मिनिट O=L)", "ONE_MINUTE", "09:15", "09:16")
 
-# 📊 २. ९:२१ AM - ५-मिनिट कन्फर्म अलर्ट (Confirmed Entry)
 def scan_921_confirmed():
-    send_auto_scan_job("📊 ५-मिनिट ऑटो-अलर्ट (९:२१ AM)", "FIVE_MINUTE", "09:15", "09:20")
+    send_auto_scan_job("📊 ५-मिनिट ऑटो-अलर्ट (५-मिनिट O=L)", "FIVE_MINUTE", "09:15", "09:20")
 
-# शेड्यूलर सेटअप
+# 🟢 Scheduler Setup (१५ सेकंद उशिरा सेट केले आहे जेणेकरून API चा पूर्ण डेटा मिळेल)
 scheduler = BackgroundScheduler(timezone="Asia/Kolkata")
-scheduler.add_job(scan_916_early, 'cron', day_of_week='mon-fri', hour=9, minute=16)
-scheduler.add_job(scan_921_confirmed, 'cron', day_of_week='mon-fri', hour=9, minute=21)
+scheduler.add_job(scan_916_early, 'cron', day_of_week='mon-fri', hour=9, minute=16, second=15)
+scheduler.add_job(scan_921_confirmed, 'cron', day_of_week='mon-fri', hour=9, minute=21, second=15)
 scheduler.start()
 
 # ==========================================
@@ -390,20 +395,19 @@ def send_welcome(message):
     )
     bot.send_message(message.chat.id, welcome_text, parse_mode="Markdown", reply_markup=get_main_keyboard())
 
-# 🔴 अ‍ॅडमिन अलर्ट चालू/बंद कमांड्स
 @bot.message_handler(commands=['alerts_off'])
 def disable_alerts(message):
     global AUTO_ALERTS_ENABLED
     if str(message.chat.id) == str(ADMIN_CHAT_ID):
         AUTO_ALERTS_ENABLED = False
-        bot.send_message(ADMIN_CHAT_ID, "🔴 **ऑटो-अलर्ट्स यशस्वीपणे बंद (DISABLED) केले आहेत!**\nआता ९:१६ आणि ९:२१ ला सबस्क्रायबर्सना ऑटो-मेसेज जाणार नाहीत.")
+        bot.send_message(ADMIN_CHAT_ID, "🔴 **ऑटो-अलर्ट्स यशस्वीपणे बंद (DISABLED) केले आहेत!**")
 
 @bot.message_handler(commands=['alerts_on'])
 def enable_alerts(message):
     global AUTO_ALERTS_ENABLED
     if str(message.chat.id) == str(ADMIN_CHAT_ID):
         AUTO_ALERTS_ENABLED = True
-        bot.send_message(ADMIN_CHAT_ID, "🟢 **ऑटो-अलर्ट्स यशस्वीपणे सुरू (ENABLED) केले आहेत!**\nआता ९:१६ आणि ९:२१ ला सबस्क्रायबर्सना ऑटो-मेसेज पाठवले जातील.")
+        bot.send_message(ADMIN_CHAT_ID, "🟢 **ऑटो-अलर्ट्स यशस्वीपणे सुरू (ENABLED) केले आहेत!**")
 
 @bot.message_handler(commands=['users'])
 def show_users(message):
@@ -446,7 +450,6 @@ def callback_query(call):
     chat_id = call.message.chat.id
     
     if call.data == "scan_now":
-        # 🟢 मार्केट उघडले आहे का ते आधी तपासा
         is_ready, alert_msg = is_market_ready_for_scan()
         if not is_ready:
             bot.send_message(chat_id, alert_msg, parse_mode="Markdown")
@@ -456,7 +459,6 @@ def callback_query(call):
         send_scan_report(chat_id)
         
     elif call.data == "setup_2":
-        # 🟢 मार्केट उघडले आहे का ते आधी तपासा
         is_ready, alert_msg = is_market_ready_for_scan()
         if not is_ready:
             bot.send_message(chat_id, alert_msg, parse_mode="Markdown")
@@ -515,9 +517,6 @@ def handle_contact(message):
     )
     bot.send_message(ADMIN_CHAT_ID, admin_msg, parse_mode="Markdown")
 
-# ==========================================
-# 💬 सामान्य मेसेज हँडलर (Hii, Hello, इ. साठी)
-# ==========================================
 @bot.message_handler(func=lambda message: True)
 def handle_all_other_messages(message):
     chat_id = message.chat.id
