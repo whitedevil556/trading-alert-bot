@@ -291,6 +291,30 @@ def handle_contact(message):
     bot.send_message(ADMIN_CHAT_ID, admin_msg, parse_mode="Markdown")
 
 # ==========================================
+# 💬 सामान्य मेसेज हँडलर (Hii, Hello, इ. साठी)
+# ==========================================
+@bot.message_handler(func=lambda message: True)
+def handle_all_other_messages(message):
+    chat_id = message.chat.id
+    first_name = message.from_user.first_name if message.from_user.first_name else "मित्र"
+
+    text = (
+        f"नमस्कार **{first_name}**! 🙏\n\n"
+        "मी तुमचा **Trading Alert Bot** आहे. मदत हवी असल्यास खालील बटणांवर क्लिक करा:"
+    )
+
+    markup = InlineKeyboardMarkup()
+    markup.row_width = 2
+    btn1 = InlineKeyboardButton("📊 आत्ता स्कॅन करा", callback_data="scan_now")
+    btn2 = InlineKeyboardButton("⏰ डेली ऑटो-अलर्ट", callback_data="subscribe")
+    btn3 = InlineKeyboardButton("📈 स्ट्रॅटेजी माहिती", callback_data="strategy")
+    btn4 = InlineKeyboardButton("📞 सपोर्ट / ॲडमिन", callback_data="support")
+
+    markup.add(btn1, btn2, btn3, btn4)
+    bot.send_message(chat_id, text, parse_mode="Markdown", reply_markup=markup)
+
+
+# ==========================================
 # 🚀 ६. Flask Web Server (For Render) & Bot Start
 # ==========================================
 app = Flask(__name__)
