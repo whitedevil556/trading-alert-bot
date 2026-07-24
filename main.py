@@ -33,13 +33,18 @@ AUTO_ALERTS_ENABLED = True
 bot = telebot.TeleBot(TELEGRAM_TOKEN)
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
+# 🌐 IST टाइमझोन हेल्पर्स
+IST = datetime.timezone(datetime.timedelta(hours=5, minutes=30))
+
+def get_ist_now():
+    return datetime.datetime.now(IST)
+
 # ==========================================
 # ⏰ मार्केट टाइमिंग चेकर
 # ==========================================
 def is_market_ready_for_scan():
     """मध्यरात्री १२ ते सकाळी ९:१६ दरम्यान मॅन्युअल स्कॅन रोखण्यासाठी चेकर"""
-    IST = datetime.timezone(datetime.timedelta(hours=5, minutes=30))
-    now_ist = datetime.datetime.now(IST)
+    now_ist = get_ist_now()
     
     if now_ist.weekday() in [5, 6]:
         return False, "🏖️ **आज शनिवार/रविवार असल्यामुळे मार्केट बंद आहे.**\n\nसोमवारी सकाळी ९:१६ नंतर पुन्हा स्कॅन करा!"
@@ -71,7 +76,7 @@ def load_subscribers():
 
 def save_subscriber(chat_id, name, phone):
     try:
-        today_str = str(datetime.date.today())
+        today_str = get_ist_now().strftime('%Y-%m-%d')
         data = {
             "chat_id": str(chat_id),
             "name": name,
@@ -96,20 +101,19 @@ CACHED_OL_RESULTS = {
 }
 
 # ==========================================
-# 📈 ३. अँगल वन स्कॅनर इंजिन - १ (Open = Low / Open = High)
+# 📈 ३. स्कॅнер इंजिन - १ (Open = Low / Open = High)
 # ==========================================
 def get_angel_scan_results(interval="FIVE_MINUTE", from_time="09:15", to_time="09:20", force_refresh=False):
     global CACHED_OL_RESULTS
     
-    today_str = datetime.date.today().strftime('%Y-%m-%d')
+    today_str = get_ist_now().strftime('%Y-%m-%d')
     
-    # ⚡ १. जर force_refresh = False असेल आणि कॅशेमध्ये ५-मिनिटांचा डेटा असेल, तर मेमरीमधून द्या
     if not force_refresh and CACHED_OL_RESULTS["date"] == today_str and CACHED_OL_RESULTS["interval"] == "FIVE_MINUTE":
         if CACHED_OL_RESULTS["bullish"] is not None:
-            print("⚡ [Cache Used] सेव्ह केलेला ५-मिनिटांचा परफेक्ट डेटा वापरत आहे...")
+            print("⚡ [Cache Used] सेव्ह केलेला ५-मिनिटांचा डेटा वापरत आहे...")
             return CACHED_OL_RESULTS["bullish"], CACHED_OL_RESULTS["bearish"]
 
-    print("🌐 [API Live Fetch] अँगल वनवरून नवीन डेटा आणत आहे...")
+    print("🌐 [API Live Fetch] सर्व्हरवरून नवीन डेटा आणत आहे...")
     obj = SmartConnect(api_key=ANGEL_API_KEY)
     try:
         totp = pyotp.TOTP(ANGEL_TOTP_KEY).now() if ANGEL_TOTP_KEY else ""
@@ -143,7 +147,7 @@ def get_angel_scan_results(interval="FIVE_MINUTE", from_time="09:15", to_time="0
 
     for symbol, token in NIFTY_STOCKS_ANGEL.items():
         try:
-            time.sleep(0.5)
+            time.sleep(0.4)
             historicParam = {
                 "exchange": "NSE",
                 "symboltoken": token,
@@ -156,7 +160,9 @@ def get_angel_scan_results(interval="FIVE_MINUTE", from_time="09:15", to_time="0
                 continue
                 
             candle = resp['data'][0]
-            open_p, high_p, low_p = float(candle[1]), float(candle[2]), float(candle[3])
+            open_p = round(float(candle[1]), 2)
+            high_p = round(float(candle[2]), 2)
+            low_p = round(float(candle[3]), 2)
 
             if open_p == low_p:
                 bullish_stocks.append({'symbol': symbol, 'open': open_p, 'high': high_p, 'low': low_p})
@@ -165,7 +171,6 @@ def get_angel_scan_results(interval="FIVE_MINUTE", from_time="09:15", to_time="0
         except Exception:
             continue
 
-    # 💾 ५-मिनिटांचा डेटा असेल तरच कॅशेमध्ये सेव्ह करा
     if interval == "FIVE_MINUTE":
         CACHED_OL_RESULTS["date"] = today_str
         CACHED_OL_RESULTS["interval"] = "FIVE_MINUTE"
@@ -176,8 +181,7 @@ def get_angel_scan_results(interval="FIVE_MINUTE", from_time="09:15", to_time="0
 
 # 🟢 रिपोर्टींग फंक्शन
 def send_scan_report(chat_id, force_refresh=False):
-    IST = datetime.timezone(datetime.timedelta(hours=5, minutes=30))
-    now_ist = datetime.datetime.now(IST)
+    now_ist = get_ist_now()
     now_time = now_ist.strftime("%H:%M")
 
     if now_time < "09:21":
@@ -188,11 +192,11 @@ def send_scan_report(chat_id, force_refresh=False):
         time_title = "५-मिनिट कॅन्डल"
     
     if bullish is None:
-        bot.send_message(chat_id, "❌ अँगल वन सर्व्हरशी कनेक्ट होऊ शकलो नाही. API ची माहिती तपासा.")
+        bot.send_message(chat_id, "❌ मार्केट सर्व्हरशी संपर्क होऊ शकला नाही. कृपया थोड्या वेळाने प्रयत्न करा.")
         return
 
     refresh_markup = InlineKeyboardMarkup()
-    btn_ref = InlineKeyboardButton("🔄 ताजे रिफ्रेश स्कॅन करा (Fresh Scan)", callback_data="force_scan_now")
+    btn_ref = InlineKeyboardButton("🔄 ताजे रिफ्रेश स्कॅन करा", callback_data="force_scan_now")
     refresh_markup.add(btn_ref)
 
     if bullish:
@@ -212,7 +216,7 @@ def send_scan_report(chat_id, force_refresh=False):
         bot.send_message(chat_id, f"🔴 **BEARISH:** आज एकही परफेक्ट O=H स्टॉक सापडला नाही ({time_title}).", parse_mode="Markdown", reply_markup=refresh_markup)
 
 # ==========================================
-# 🧠 ७. अँगल वन स्कॅनर इंजिन - २ (Setup 2 - 50% Body Rule)
+# 🧠 ७. स्कॅनर इंजिन - २ (Setup 2 - 50% Body Rule)
 # ==========================================
 def scan_setup_2():
     obj = SmartConnect(api_key=ANGEL_API_KEY)
@@ -220,9 +224,9 @@ def scan_setup_2():
         totp = pyotp.TOTP(ANGEL_TOTP_KEY).now() if ANGEL_TOTP_KEY else ""
         login_data = obj.generateSession(ANGEL_CLIENT_ID, ANGEL_PASSWORD, totp)
         if not (login_data and login_data.get('status')):
-            return "❌ API Login Failed"
+            return "❌ सर्व्हर कनेक्टिव्हिटी एरर"
     except Exception:
-        return "❌ API Exception"
+        return "❌ सर्व्हर कनेक्टिव्हिटी एरर"
 
     WATCHLIST = {
         'NIFTY 50': '26000', 
@@ -242,8 +246,9 @@ def scan_setup_2():
         'HDFCLIFE': '467', 'SBILIFE': '21808', 'TATACONSUM': '3432', 'JSWSTEEL': '11723'
     }
 
-    today_str = datetime.date.today().strftime('%Y-%m-%d')
-    now_time = datetime.datetime.now().strftime('%H:%M')
+    now_ist = get_ist_now()
+    today_str = now_ist.strftime('%Y-%m-%d')
+    now_time = now_ist.strftime('%H:%M')
     
     from_date_time = f"{today_str} 09:15"
     to_date_time = f"{today_str} {now_time}"
@@ -253,7 +258,7 @@ def scan_setup_2():
 
     for symbol, token in WATCHLIST.items():
         try:
-            time.sleep(0.5)
+            time.sleep(0.4)
 
             historicParam = {
                 "exchange": "NSE",
@@ -269,9 +274,12 @@ def scan_setup_2():
             data = resp['data']
             
             f_candle = data[0]
-            f_open, f_high, f_low, f_close = float(f_candle[1]), float(f_candle[2]), float(f_candle[3]), float(f_candle[4])
+            f_open, f_high, f_low, f_close = round(float(f_candle[1]), 2), round(float(f_candle[2]), 2), round(float(f_candle[3]), 2), round(float(f_candle[4]), 2)
             
             f_range = f_high - f_low
+            if f_range <= 0:
+                continue
+
             f_mid = f_low + (f_range * 0.50)
             
             is_bullish_first = f_close >= f_open
@@ -288,8 +296,9 @@ def scan_setup_2():
             for i in range(1, len(data)):
                 c_candle = data[i]
                 c_time = c_candle[0].split("T")[1][:5]
-                c_open, c_high, c_low, c_close = float(c_candle[1]), float(c_candle[2]), float(c_candle[3]), float(c_candle[4])
+                c_open, c_high, c_low, c_close = round(float(c_candle[1]), 2), round(float(c_candle[2]), 2), round(float(c_candle[3]), 2), round(float(c_candle[4]), 2)
                 
+                # १. जर आधीच READY अलर्ट बनला असेल, तर हाय किंवा लो ब्रेक तपासणे
                 if setup_active and inside_count >= 1:
                     if is_bullish_first and c_high > trigger_high:
                         stock_status = f"🚀 **BUY Triggered** @ {c_time} (> ₹{trigger_high:.2f})"
@@ -303,16 +312,16 @@ def scan_setup_2():
                 if not setup_active:
                     continue
 
+                # २. ५०% झोनमधील इनसाईड कॅन्डल तपासणे
                 body_max = max(c_open, c_close)
                 body_min = min(c_open, c_close)
                 
-                body_in_upper_half = (body_min >= f_mid) and (body_max <= f_high)
-                body_in_lower_half = (body_max <= f_mid) and (body_min >= f_low)
+                body_in_upper_half = (body_min >= f_mid)
+                body_in_lower_half = (body_max <= f_mid)
                 
                 is_inside_valid = (is_bullish_first and body_in_upper_half) or (is_bearish_first and body_in_lower_half)
-                small_body = abs(c_close - c_open) <= (f_range * 0.50)
                 
-                if is_inside_valid and small_body:
+                if is_inside_valid:
                     inside_count += 1
                     trigger_high = max(trigger_high, c_high)
                     trigger_low = min(trigger_low, c_low)
@@ -350,7 +359,7 @@ def send_auto_scan_job(title_prefix, interval_type, from_t, to_t):
 
     bullish, bearish = get_angel_scan_results(interval=interval_type, from_time=from_t, to_time=to_t)
     if bullish is None:
-        bot.send_message(ADMIN_CHAT_ID, f"❌ **[{title_prefix} Error]** अँगल वन डेटा फेच करू शकलो नाही.")
+        bot.send_message(ADMIN_CHAT_ID, f"❌ **[{title_prefix} Error]** मार्केट डेटा फेच करू शकलो नाही.")
         return
 
     msg_bullish = f"⏰ **{title_prefix} 📊**\n\n🟢 **BULLISH (Open = Low) - {len(bullish)} Stocks:**\n"
@@ -386,7 +395,7 @@ def scan_916_early():
 def scan_921_confirmed():
     send_auto_scan_job("📊 ५-मिनिट ऑटो-अलर्ट (५-मिनिट O=L)", "FIVE_MINUTE", "09:15", "09:20")
 
-# 🟢 Scheduler Setup (१५ सेकंद उशिरा सेट केले आहे जेणेकरून पूर्ण डेटा मिळेल)
+# 🟢 Scheduler Setup
 scheduler = BackgroundScheduler(timezone="Asia/Kolkata")
 scheduler.add_job(scan_916_early, 'cron', day_of_week='mon-fri', hour=9, minute=16, second=15)
 scheduler.add_job(scan_921_confirmed, 'cron', day_of_week='mon-fri', hour=9, minute=21, second=15)
@@ -487,7 +496,7 @@ def callback_query(call):
             bot.send_message(chat_id, alert_msg, parse_mode="Markdown")
             return
 
-        bot.send_message(chat_id, "🔄 *अँगल वनवरून ताजा (Fresh Live) डेटा मागवत आहे... कृपया ३० सेकंद थांबा...*", parse_mode="Markdown")
+        bot.send_message(chat_id, "🔄 *ताजा (Fresh Live) डेटा मागवत आहे... कृपया ३० सेकंद थांबा...*", parse_mode="Markdown")
         send_scan_report(chat_id, force_refresh=True)
 
     elif call.data == "setup_2":
