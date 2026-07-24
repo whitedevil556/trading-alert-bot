@@ -29,7 +29,7 @@ SUPABASE_KEY = "sb_publishable_KuHxRULppKuRsJgvbRssBA_mwoFxqtd"
 
 # 🟢 Global Alert Switch & Thread Lock
 AUTO_ALERTS_ENABLED = True
-scan_lock = threading.Lock() # 🔒 मल्टीपल युजर्ससाठी थ्रेड लॉक
+scan_lock = threading.Lock()
 
 bot = telebot.TeleBot(TELEGRAM_TOKEN)
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
@@ -44,14 +44,13 @@ def get_ist_now():
 # 🔁 API डेटा री-ट्राय व AB1021 हँडलर
 # ==========================================
 def fetch_candle_data_with_retry(obj, historicParam, retries=3):
-    """AB1021 Too Many Requests एरर आल्यास १ सेकंद थांबून री-ट्राय करतो"""
+    """AB1021 Too Many Requests एरर आल्यास किंवा डेटा उशिरा आल्यास री-ट्राय करतो"""
     for attempt in range(retries):
         try:
             resp = obj.getCandleData(historicParam)
             if resp and isinstance(resp, dict):
                 if resp.get('status') is True and 'data' in resp and resp['data']:
                     return resp['data']
-                # 🛑 जर Rate Limit (AB1021) आला तर १ सेकंद थांबा
                 elif resp.get('errorcode') == 'AB1021' or 'Too many requests' in str(resp.get('message')):
                     time.sleep(1.0)
                     continue
@@ -134,14 +133,11 @@ def get_angel_scan_results(interval="FIVE_MINUTE", from_time="09:15", to_time="0
     
     today_str = get_ist_now().strftime('%Y-%m-%d')
     
-    # ⚡ १. कॅशे चेक (Cache First)
     if not force_refresh and CACHED_OL_RESULTS["date"] == today_str and CACHED_OL_RESULTS["interval"] == "FIVE_MINUTE":
         if CACHED_OL_RESULTS["bullish"] is not None:
             return CACHED_OL_RESULTS["bullish"], CACHED_OL_RESULTS["bearish"]
 
-    # 🔒 मल्टीपल युजर्ससाठी लॉक वापरणे जेणेकरून एकाच वेळी २ स्कॅन चालणार नाहीत
     with scan_lock:
-        # पुन्हा एकदा लॉक मिळाल्यावर कॅशे चेक
         if not force_refresh and CACHED_OL_RESULTS["date"] == today_str and CACHED_OL_RESULTS["interval"] == "FIVE_MINUTE":
             if CACHED_OL_RESULTS["bullish"] is not None:
                 return CACHED_OL_RESULTS["bullish"], CACHED_OL_RESULTS["bearish"]
@@ -180,7 +176,7 @@ def get_angel_scan_results(interval="FIVE_MINUTE", from_time="09:15", to_time="0
 
         for symbol, token in NIFTY_STOCKS_ANGEL.items():
             try:
-                time.sleep(0.35) # Safe API rate delay
+                time.sleep(0.35)
                 historicParam = {
                     "exchange": "NSE",
                     "symboltoken": token,
@@ -192,15 +188,25 @@ def get_angel_scan_results(interval="FIVE_MINUTE", from_time="09:15", to_time="0
                 candles = fetch_candle_data_with_retry(obj, historicParam, retries=3)
                 if not candles:
                     continue
+                
+                target_candle = None
+                for c in candles:
+                    if "09:15" in c[0]:
+                        target_candle = c
+                        break
+                
+                if not target_candle:
+                    target_candle = candles[0]
                     
-                candle = candles[0]
-                open_p = round(float(candle[1]), 2)
-                high_p = round(float(candle[2]), 2)
-                low_p = round(float(candle[3]), 2)
+                open_p = round(float(target_candle[1]), 2)
+                high_p = round(float(target_candle[2]), 2)
+                low_p = round(float(target_candle[3]), 2)
 
-                if abs(open_p - low_p) <= 0.05:
+                tol = max(0.10, open_p * 0.0005)
+
+                if abs(open_p - low_p) <= tol:
                     bullish_stocks.append({'symbol': symbol, 'open': open_p, 'high': high_p, 'low': low_p})
-                elif abs(open_p - high_p) <= 0.05:
+                elif abs(open_p - high_p) <= tol:
                     bearish_stocks.append({'symbol': symbol, 'open': open_p, 'high': high_p, 'low': low_p})
             except Exception:
                 continue
@@ -249,7 +255,7 @@ def send_scan_report(chat_id, force_refresh=False):
         bot.send_message(chat_id, f"🔴 **BEARISH:** आज एकही परफेक्ट O=H स्टॉक सापडला नाही ({time_title}).", parse_mode="Markdown", reply_markup=refresh_markup)
 
 # ==========================================
-# 🧠 ७. स्कॅनर इंजिन - २ (Setup 2)
+# 🧠 ७. स्कॅनर इंजिन - २ (Setup 2 - Clean Category Formatting)
 # ==========================================
 def scan_setup_2(force_refresh=False):
     global CACHED_SETUP2_RESULTS, scan_lock
@@ -295,8 +301,11 @@ def scan_setup_2(force_refresh=False):
         from_date_time = f"{today_str} 09:15"
         to_date_time = f"{today_str} {now_time}"
 
-        report_text = f"🔥 **Setup 2 - Live Radar** 🔥\n🕒 Timeframe: 5 Min\n\n"
-        found_setups = 0
+        # 🟢 कॅटेगरीनुसार लिस्ट तयार करणे (खिचडी टाळण्यासाठी)
+        buy_list = []
+        sell_list = []
+        ready_list = []
+        cancelled_list = []
 
         for symbol, token in WATCHLIST.items():
             try:
@@ -317,8 +326,9 @@ def scan_setup_2(force_refresh=False):
                 f_candle = data[0]
                 f_open, f_high, f_low, f_close = round(float(f_candle[1]), 2), round(float(f_candle[2]), 2), round(float(f_candle[3]), 2), round(float(f_candle[4]), 2)
                 
-                is_bullish_first = (abs(f_open - f_low) <= 0.05)
-                is_bearish_first = (abs(f_open - f_high) <= 0.05)
+                tol = max(0.10, f_open * 0.0005)
+                is_bullish_first = (abs(f_open - f_low) <= tol)
+                is_bearish_first = (abs(f_open - f_high) <= tol)
                 
                 if not (is_bullish_first or is_bearish_first):
                     continue
@@ -334,8 +344,6 @@ def scan_setup_2(force_refresh=False):
                 inside_count = 0
                 trigger_high = f_high
                 trigger_low = f_low
-                
-                stock_status = ""
 
                 for i in range(1, len(data)):
                     c_candle = data[i]
@@ -344,11 +352,11 @@ def scan_setup_2(force_refresh=False):
                     
                     if setup_active and inside_count >= 1:
                         if is_bullish_first and c_high > trigger_high:
-                            stock_status = f"🟢 🚀 **BUY Triggered** @ {c_time} (> ₹{trigger_high:.2f})"
+                            buy_list.append(f"🚀 **{symbol}**: BUY @ {c_time} (> ₹{trigger_high:.2f})")
                             daily_signal_fired = True
                             break
                         elif is_bearish_first and c_low < trigger_low:
-                            stock_status = f"🔴 🩸 **SELL Triggered** @ {c_time} (< ₹{trigger_low:.2f})"
+                            sell_list.append(f"🩸 **{symbol}**: SELL @ {c_time} (< ₹{trigger_low:.2f})")
                             daily_signal_fired = True
                             break
 
@@ -367,22 +375,44 @@ def scan_setup_2(force_refresh=False):
                         inside_count += 1
                         trigger_high = max(trigger_high, c_high)
                         trigger_low = min(trigger_low, c_low)
-                        stock_status = f"⚠️ **READY** @ {c_time} (Watch H: ₹{trigger_high:.2f} / L: ₹{trigger_low:.2f})"
+                        # तात्पुरती READY लिस्टमध्ये ठेवा
+                        current_status = f"🔸 **{symbol}**: READY @ {c_time} (H: ₹{trigger_high:.2f} / L: ₹{trigger_low:.2f})"
                     else:
                         if inside_count >= 1 and not daily_signal_fired:
-                            stock_status = f"❌ **Setup Cancelled** @ {c_time} (Zone Break)"
+                            cancelled_list.append(f"❌ **{symbol}**: Cancelled @ {c_time}")
                         setup_active = False
 
-                if stock_status != "":
-                    report_text += f"🔸 **{symbol}:** {stock_status}\n"
-                    found_setups += 1
+                if setup_active and inside_count >= 1 and not daily_signal_fired:
+                    ready_list.append(current_status)
                 
             except Exception:
                 continue
                 
-        if found_setups == 0:
+        # 🟢 सुन्दर आणि स्पष्ट मेसेज तयार करणे
+        report_text = f"🔥 **Setup 2 - Live Radar** 🔥\n🕒 Timeframe: 5 Min\n"
+        report_text += "───────────────────\n\n"
+
+        found_any = False
+
+        if buy_list:
+            report_text += "🟢 **BUY SIGNALS** 🚀\n" + "\n".join(buy_list) + "\n\n"
+            found_any = True
+
+        if sell_list:
+            report_text += "🔴 **SELL SIGNALS** 🩸\n" + "\n".join(sell_list) + "\n\n"
+            found_any = True
+
+        if ready_list:
+            report_text += "⚠️ **READY STOCKS (Watch Zone)** 🎯\n" + "\n".join(ready_list) + "\n\n"
+            found_any = True
+
+        if cancelled_list:
+            report_text += "❌ **CANCELLED SETUPS**\n" + "\n".join(cancelled_list) + "\n"
+            found_any = True
+
+        if not found_any:
             report_text += "⚪ सध्या कोणत्याही स्टॉकमध्ये 'Setup 2' बनलेला नाही."
-            
+
         CACHED_SETUP2_RESULTS["date"] = today_str
         CACHED_SETUP2_RESULTS["report"] = report_text
             
@@ -401,7 +431,7 @@ def send_setup2_report_to_user(chat_id, force_refresh=False):
     bot.send_message(chat_id, report_text, parse_mode="Markdown", reply_markup=refresh_markup)
 
 # ==========================================
-# ⏰ ४. ऑटो-अलर्ट शेड्यूलर (सकाळी ९:१६:०४ आणि ९:२१:०४)
+# ⏰ ४. ऑटो-अलर्ट शेड्यूलर (सकाळी ९:१६, ९:२१ आणि ९:२६ ला Setup 2)
 # ==========================================
 def send_auto_scan_job(title_prefix, interval_type, from_t, to_t):
     global AUTO_ALERTS_ENABLED
@@ -446,16 +476,41 @@ def send_auto_scan_job(title_prefix, interval_type, from_t, to_t):
 
     bot.send_message(ADMIN_CHAT_ID, f"✅ **[{title_prefix} Complete]** {sent_count} सबस्क्रायबर्सना अलर्ट पाठवला!")
 
+def scan_setup2_auto_job():
+    """सकाळी ९:२६ ला सबस्क्रायबर्सना Setup 2 चा ऑटो-अलर्ट पाठवणे"""
+    global AUTO_ALERTS_ENABLED
+    if not AUTO_ALERTS_ENABLED:
+        return
+
+    subs = load_subscribers()
+    if not subs:
+        return
+
+    report_text = scan_setup_2(force_refresh=True)
+    full_report = f"⏰ **सकाळचा ऑटो-अलर्ट (Setup 2)** 📊\n\n" + report_text
+
+    sent_count = 0
+    for chat_id in subs.keys():
+        try:
+            bot.send_message(chat_id, full_report, parse_mode="Markdown")
+            sent_count += 1
+            time.sleep(0.3)
+        except Exception:
+            continue
+
+    bot.send_message(ADMIN_CHAT_ID, f"✅ **[Setup 2 Auto-Alert Complete]** {sent_count} सबस्क्रायबर्सना पाठवला!")
+
 def scan_916_early():
     send_auto_scan_job("⚡ फास्ट ऑटो-अलर्ट (१-मिनिट O=L)", "ONE_MINUTE", "09:15", "09:16")
 
 def scan_921_confirmed():
     send_auto_scan_job("📊 ५-मिनिट ऑटो-अलर्ट (५-मिनिट O=L)", "FIVE_MINUTE", "09:15", "09:20")
 
-# 🟢 Scheduler Setup (कॅन्डल क्लोज झाल्यावर ४थ्या सेकंदाला ऑटो-स्कॅन)
+# 🟢 Scheduler Setup (सकाळी ९:१६:०४, ९:२१:०४ आणि ९:२६:०४ ला ऑटो-स्कॅन)
 scheduler = BackgroundScheduler(timezone="Asia/Kolkata")
 scheduler.add_job(scan_916_early, 'cron', day_of_week='mon-fri', hour=9, minute=16, second=4)
 scheduler.add_job(scan_921_confirmed, 'cron', day_of_week='mon-fri', hour=9, minute=21, second=4)
+scheduler.add_job(scan_setup2_auto_job, 'cron', day_of_week='mon-fri', hour=9, minute=26, second=4)
 scheduler.start()
 
 # ==========================================
@@ -610,7 +665,7 @@ def handle_contact(message):
     remove_kb = ReplyKeyboardRemove()
     bot.send_message(
         chat_id, 
-        f"✅ **धन्यवाद {name}!**\nतुमचा नंबर (`{phone}`) यशस्वीपणे रजिस्टर झाला आहे. तुम्हाला रोज सकाळी ९:१६ आणि ९:२१ वाजता ऑटो-अलर्ट मिळतील.", 
+        f"✅ **धन्यवाद {name}!**\nतुमचा नंबर (`{phone}`) यशस्वीपणे रजिस्टर झाला आहे. तुम्हाला रोज सकाळी ९:१६, ९:२१ आणि ९:२६ वाजता ऑटो-अलर्ट मिळतील.", 
         parse_mode="Markdown", 
         reply_markup=remove_kb
     )
