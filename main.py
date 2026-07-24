@@ -1,4 +1,9 @@
-# 🚀 instant test command (मार्केट क्लोजिंग टेस्टसाठी)
+# ==========================================
+# 🤖 ५. टेलिग्राम कमांड्स व अ‍ॅडमिन कस्टमायझेशन
+# ==========================================
+
+# 👈 इथे आधीच 'bot' डिफाईन झालेला असतो!
+
 @bot.message_handler(commands=['instant_test'])
 def instant_test_alert(message):
     if str(message.chat.id) == str(ADMIN_CHAT_ID):
