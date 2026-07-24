@@ -1,4 +1,8 @@
-# 🟢 सर्व आवश्यक लायब्ररीज
+# ==========================================
+# 🤖 Trading Alert Bot - Full Single File (main.py)
+# ==========================================
+
+# 🟢 १. सर्व आवश्यक लायब्ररीज
 import os
 import time
 import datetime
@@ -12,7 +16,7 @@ from supabase import create_client, Client
 import pyotp
 
 # ==========================================
-# ⚙️ १. सर्व क्रेडेन्शियल्स
+# ⚙️ २. सर्व क्रेडेन्शियल्स
 # ==========================================
 TELEGRAM_TOKEN = "8769731052:AAEekGCG7hpi8L9lpotPjWKSHliydXfEDhk"
 ADMIN_CHAT_ID = "1311752899"
@@ -31,6 +35,7 @@ SUPABASE_KEY = "sb_publishable_KuHxRULppKuRsJgvbRssBA_mwoFxqtd"
 AUTO_ALERTS_ENABLED = True
 scan_lock = threading.Lock()
 
+# 🤖 टेलिग्राम बॉट आणि डेटाबेस क्लायंट सुरुवातीलाच डिफाईन केले आहेत
 bot = telebot.TeleBot(TELEGRAM_TOKEN)
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
@@ -41,7 +46,7 @@ def get_ist_now():
     return datetime.datetime.now(IST)
 
 # ==========================================
-# 🔁 API डेटा री-ट्राय व AB1021 हँडलर
+# 🔁 ३. API डेटा री-ट्राय व AB1021 हँडलर
 # ==========================================
 def fetch_candle_data_with_retry(obj, historicParam, retries=3):
     """AB1021 Too Many Requests एरर आल्यास किंवा डेटा उशिरा आल्यास री-ट्राय करतो"""
@@ -60,7 +65,7 @@ def fetch_candle_data_with_retry(obj, historicParam, retries=3):
     return None
 
 # ==========================================
-# ⏰ मार्केट टाइमिंग चेकर
+# ⏰ ४. मार्केट टाइमिंग चेकर
 # ==========================================
 def is_market_ready_for_scan():
     """मध्यरात्री १२ ते सकाळी ९:१६ दरम्यान मॅन्युअल स्कॅन रोखण्यासाठी चेकर"""
@@ -77,7 +82,7 @@ def is_market_ready_for_scan():
     return True, ""
 
 # ==========================================
-# 📂 २. युजर डेटा मॅनेजमेंट (Supabase Database)
+# 📂 ५. युजर डेटा मॅनेजमेंट (Supabase Database)
 # ==========================================
 def load_subscribers():
     try:
@@ -111,7 +116,7 @@ def save_subscriber(chat_id, name, phone):
         return 0
 
 # ==========================================
-# 🟢 O=L / O=H & Setup 2 कॅशे मेमरी (Memory Cache)
+# 🟢 ६. O=L / O=H & Setup 2 कॅशे मेमरी (Memory Cache)
 # ==========================================
 CACHED_OL_RESULTS = {
     "date": None,
@@ -126,7 +131,7 @@ CACHED_SETUP2_RESULTS = {
 }
 
 # ==========================================
-# 📈 ३. स्कॅनर इंजिन - १ (Open = Low / Open = High)
+# 📈 ७. स्कॅनर इंजिन - १ (Open = Low / Open = High)
 # ==========================================
 def get_angel_scan_results(interval="FIVE_MINUTE", from_time="09:15", to_time="09:20", force_refresh=False):
     global CACHED_OL_RESULTS, scan_lock
@@ -255,7 +260,7 @@ def send_scan_report(chat_id, force_refresh=False):
         bot.send_message(chat_id, f"🔴 **BEARISH:** आज एकही परफेक्ट O=H स्टॉक सापडला नाही ({time_title}).", parse_mode="Markdown", reply_markup=refresh_markup)
 
 # ==========================================
-# 🧠 ७. स्कॅनर इंजिन - २ (Setup 2 - Clean Category Formatting)
+# 🧠 ८. स्कॅनर इंजिन - २ (Setup 2 - Clean Category Formatting)
 # ==========================================
 def scan_setup_2(force_refresh=False):
     global CACHED_SETUP2_RESULTS, scan_lock
@@ -301,11 +306,7 @@ def scan_setup_2(force_refresh=False):
         from_date_time = f"{today_str} 09:15"
         to_date_time = f"{today_str} {now_time}"
 
-        # 🟢 कॅटेगरीनुसार लिस्ट तयार करणे (खिचडी टाळण्यासाठी)
-        buy_list = []
-        sell_list = []
-        ready_list = []
-        cancelled_list = []
+        buy_list, sell_list, ready_list, cancelled_list = [], [], [], []
 
         for symbol, token in WATCHLIST.items():
             try:
@@ -375,7 +376,6 @@ def scan_setup_2(force_refresh=False):
                         inside_count += 1
                         trigger_high = max(trigger_high, c_high)
                         trigger_low = min(trigger_low, c_low)
-                        # तात्पुरती READY लिस्टमध्ये ठेवा
                         current_status = f"🔸 **{symbol}**: READY @ {c_time} (H: ₹{trigger_high:.2f} / L: ₹{trigger_low:.2f})"
                     else:
                         if inside_count >= 1 and not daily_signal_fired:
@@ -388,7 +388,6 @@ def scan_setup_2(force_refresh=False):
             except Exception:
                 continue
                 
-        # 🟢 सुन्दर आणि स्पष्ट मेसेज तयार करणे
         report_text = f"🔥 **Setup 2 - Live Radar** 🔥\n🕒 Timeframe: 5 Min\n"
         report_text += "───────────────────\n\n"
 
@@ -431,7 +430,7 @@ def send_setup2_report_to_user(chat_id, force_refresh=False):
     bot.send_message(chat_id, report_text, parse_mode="Markdown", reply_markup=refresh_markup)
 
 # ==========================================
-# ⏰ ४. ऑटो-अलर्ट शेड्यूलर (सकाळी ९:१६, ९:२१ आणि ९:२६ ला Setup 2)
+# ⏰ ९. ऑटो-अलर्ट शेड्यूलर (सकाळी ९:१६, ९:२१ आणि ९:२६ ला Setup 2)
 # ==========================================
 def send_auto_scan_job(title_prefix, interval_type, from_t, to_t):
     global AUTO_ALERTS_ENABLED
@@ -477,7 +476,6 @@ def send_auto_scan_job(title_prefix, interval_type, from_t, to_t):
     bot.send_message(ADMIN_CHAT_ID, f"✅ **[{title_prefix} Complete]** {sent_count} सबस्क्रायबर्सना अलर्ट पाठवला!")
 
 def scan_setup2_auto_job():
-    """सकाळी ९:२६ ला सबस्क्रायबर्सना Setup 2 चा ऑटो-अलर्ट पाठवणे"""
     global AUTO_ALERTS_ENABLED
     if not AUTO_ALERTS_ENABLED:
         return
@@ -506,7 +504,7 @@ def scan_916_early():
 def scan_921_confirmed():
     send_auto_scan_job("📊 ५-मिनिट ऑटो-अलर्ट (५-मिनिट O=L)", "FIVE_MINUTE", "09:15", "09:20")
 
-# 🟢 Scheduler Setup (सकाळी ९:१६:०४, ९:२१:०४ आणि ९:२६:०४ ला ऑटो-स्कॅन)
+# 🟢 Scheduler Setup
 scheduler = BackgroundScheduler(timezone="Asia/Kolkata")
 scheduler.add_job(scan_916_early, 'cron', day_of_week='mon-fri', hour=9, minute=16, second=4)
 scheduler.add_job(scan_921_confirmed, 'cron', day_of_week='mon-fri', hour=9, minute=21, second=4)
@@ -514,7 +512,7 @@ scheduler.add_job(scan_setup2_auto_job, 'cron', day_of_week='mon-fri', hour=9, m
 scheduler.start()
 
 # ==========================================
-# 🤖 ५. टेलिग्राम कमांड्स व अ‍ॅडमिन कस्टमायझेशन
+# 🤖 १०. टेलिग्राम कमांड्स व अ‍ॅडमिन हँडलर्स
 # ==========================================
 def get_main_keyboard():
     markup = InlineKeyboardMarkup()
@@ -538,6 +536,39 @@ def send_welcome(message):
         "खालील पर्यायांपैकी एक निवडा:"
     )
     bot.send_message(message.chat.id, welcome_text, parse_mode="Markdown", reply_markup=get_main_keyboard())
+
+# ⚡ instant test command (अ‍ॅडमिन टेस्ट करण्यासाठी)
+@bot.message_handler(commands=['instant_test'])
+def instant_test_alert(message):
+    if str(message.chat.id) == str(ADMIN_CHAT_ID):
+        bot.send_message(ADMIN_CHAT_ID, "⚡ **झटपट ऑटो-अलर्ट टेस्ट सुरू करत आहे...**", parse_mode="Markdown")
+        
+        subs = load_subscribers()
+        if not subs:
+            bot.send_message(ADMIN_CHAT_ID, "❌ डेटाबेसमध्ये एकही सबस्क्रायबर सापडला नाही.")
+            return
+
+        test_msg = (
+            "🧪 **LIVE AUTO-ALERT TEST** 🚀\n"
+            "───────────────────\n"
+            "📊 **मार्केट क्लोजिंग अलर्ट सिस्टीम चेक**\n\n"
+            "तुमच्या बॉटची ऑटो-अलर्ट सिस्टीम १००% अचूक काम करत आहे! ✅"
+        )
+
+        sent_count = 0
+        for cid in subs.keys():
+            try:
+                bot.send_message(cid, test_msg, parse_mode="Markdown")
+                sent_count += 1
+                time.sleep(0.2)
+            except Exception as e:
+                print(f"Error sending to {cid}: {e}")
+
+        bot.send_message(
+            ADMIN_CHAT_ID, 
+            f"🎉 **टेस्टिंग यशस्वी!**\n\nएकूण **{sent_count}** सबस्क्रायबर्सना लाईव्ह मेसेज पोहोचला आहे! 🚀", 
+            parse_mode="Markdown"
+        )
 
 @bot.message_handler(commands=['alerts_off'])
 def disable_alerts(message):
@@ -692,7 +723,7 @@ def handle_all_other_messages(message):
     bot.send_message(chat_id, text, parse_mode="Markdown", reply_markup=get_main_keyboard())
 
 # ==========================================
-# 🚀 ६. Flask Web Server & Bot Start
+# 🚀 ११. Flask Web Server & Bot Start
 # ==========================================
 app = Flask(__name__)
 
@@ -715,42 +746,3 @@ if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     print(f"🌐 Flask वेब सर्व्हर पोर्ट {port} वर सुरू होत आहे...")
     app.run(host="0.0.0.0", port=port)
-
-
-# ==========================================
-# 🤖 ५. टेलिग्राम कमांड्स व अ‍ॅडमिन कस्टमायझेशन
-# ==========================================
-
-# 👈 इथे आधीच 'bot' डिफाईन झालेला असतो!
-
-@bot.message_handler(commands=['instant_test'])
-def instant_test_alert(message):
-    if str(message.chat.id) == str(ADMIN_CHAT_ID):
-        bot.send_message(ADMIN_CHAT_ID, "⚡ **झटपट ऑटो-अलर्ट टेस्ट सुरू करत आहे...**", parse_mode="Markdown")
-        
-        subs = load_subscribers()
-        if not subs:
-            bot.send_message(ADMIN_CHAT_ID, "❌ डेटाबेसमध्ये एकही सबस्क्रायबर सापडला नाही.")
-            return
-
-        test_msg = (
-            "🧪 **LIVE AUTO-ALERT TEST** 🚀\n"
-            "───────────────────\n"
-            "📊 **मार्केट क्लोजिंग अलर्ट सिस्टीम चेक**\n\n"
-            "तुमच्या बॉटची ऑटो-अलर्ट सिस्टीम १००% अचूक काम करत आहे! ✅"
-        )
-
-        sent_count = 0
-        for cid in subs.keys():
-            try:
-                bot.send_message(cid, test_msg, parse_mode="Markdown")
-                sent_count += 1
-                time.sleep(0.2)
-            except Exception as e:
-                print(f"Error sending to {cid}: {e}")
-
-        bot.send_message(
-            ADMIN_CHAT_ID, 
-            f"🎉 **टेस्टिंग यशस्वी!**\n\nएकूण **{sent_count}** सबस्क्रायबर्सना लाईव्ह मेसेज पोहोचला आहे! 🚀", 
-            parse_mode="Markdown"
-        )
