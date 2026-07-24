@@ -101,7 +101,7 @@ CACHED_OL_RESULTS = {
 }
 
 # ==========================================
-# 📈 ३. स्कॅнер इंजिन - १ (Open = Low / Open = High)
+# 📈 ३. स्कॅनर इंजिन - १ (Open = Low / Open = High)
 # ==========================================
 def get_angel_scan_results(interval="FIVE_MINUTE", from_time="09:15", to_time="09:20", force_refresh=False):
     global CACHED_OL_RESULTS
@@ -216,7 +216,7 @@ def send_scan_report(chat_id, force_refresh=False):
         bot.send_message(chat_id, f"🔴 **BEARISH:** आज एकही परफेक्ट O=H स्टॉक सापडला नाही ({time_title}).", parse_mode="Markdown", reply_markup=refresh_markup)
 
 # ==========================================
-# 🧠 ७. स्कॅनर इंजिन - २ (Setup 2 - 50% Body Rule)
+# 🧠 ७. स्कॅनर इंजिन - २ (Setup 2)
 # ==========================================
 def scan_setup_2():
     obj = SmartConnect(api_key=ANGEL_API_KEY)
@@ -253,7 +253,7 @@ def scan_setup_2():
     from_date_time = f"{today_str} 09:15"
     to_date_time = f"{today_str} {now_time}"
 
-    report_text = f"🔥 **Setup 2 (50% Rule) - Live Radar** 🔥\n🕒 Timeframe: 5 Min\n\n"
+    report_text = f"🔥 **Setup 2 - Live Radar** 🔥\n🕒 Timeframe: 5 Min\n\n"
     found_setups = 0
 
     for symbol, token in WATCHLIST.items():
@@ -272,18 +272,21 @@ def scan_setup_2():
                 continue
             
             data = resp['data']
-            
             f_candle = data[0]
             f_open, f_high, f_low, f_close = round(float(f_candle[1]), 2), round(float(f_candle[2]), 2), round(float(f_candle[3]), 2), round(float(f_candle[4]), 2)
             
+            # 🟢 STRICT RULE: पहिली कॅन्डल O=L किंवा O=H असलीच पाहिजे!
+            is_bullish_first = (f_open == f_low)
+            is_bearish_first = (f_open == f_high)
+            
+            if not (is_bullish_first or is_bearish_first):
+                continue # जर अट पूर्ण होत नसेल, तर स्टॉक स्कॅन करू नका
+
             f_range = f_high - f_low
             if f_range <= 0:
                 continue
 
             f_mid = f_low + (f_range * 0.50)
-            
-            is_bullish_first = f_close >= f_open
-            is_bearish_first = f_close < f_open
             
             setup_active = True
             daily_signal_fired = False
@@ -298,7 +301,7 @@ def scan_setup_2():
                 c_time = c_candle[0].split("T")[1][:5]
                 c_open, c_high, c_low, c_close = round(float(c_candle[1]), 2), round(float(c_candle[2]), 2), round(float(c_candle[3]), 2), round(float(c_candle[4]), 2)
                 
-                # १. जर आधीच READY अलर्ट बनला असेल, तर हाय किंवा लो ब्रेक तपासणे
+                # १. जर आधीच READY अलर्ट बनला असेल, तर ब्रेकआऊट तपासणे
                 if setup_active and inside_count >= 1:
                     if is_bullish_first and c_high > trigger_high:
                         stock_status = f"🚀 **BUY Triggered** @ {c_time} (> ₹{trigger_high:.2f})"
@@ -312,7 +315,7 @@ def scan_setup_2():
                 if not setup_active:
                     continue
 
-                # २. ५०% झोनमधील इनसाईड कॅन्डल तपासणे
+                # २. योग्य झोनमधील इनसाईड कॅन्डल तपासणे
                 body_max = max(c_open, c_close)
                 body_min = min(c_open, c_close)
                 
@@ -328,7 +331,7 @@ def scan_setup_2():
                     stock_status = f"⚠️ **READY** @ {c_time} (Watch H: ₹{trigger_high:.2f} / L: ₹{trigger_low:.2f})"
                 else:
                     if inside_count >= 1 and not daily_signal_fired:
-                        stock_status = f"❌ **Setup Cancelled** @ {c_time} (50% Zone Break)"
+                        stock_status = f"❌ **Setup Cancelled** @ {c_time} (Zone Break)"
                     setup_active = False
 
             if stock_status != "":
@@ -408,7 +411,7 @@ def get_main_keyboard():
     markup = InlineKeyboardMarkup()
     markup.row_width = 2
     btn1 = InlineKeyboardButton("📊 आत्ता स्कॅन करा (O=L)", callback_data="scan_now")
-    btn5 = InlineKeyboardButton("🔥 Setup 2 (50% Rule)", callback_data="setup_2")
+    btn5 = InlineKeyboardButton("🔥 Setup 2", callback_data="setup_2")
     btn2 = InlineKeyboardButton("⏰ डेली ऑटो-अलर्ट", callback_data="subscribe")
     btn3 = InlineKeyboardButton("📈 स्ट्रॅटेजी माहिती", callback_data="strategy")
     btn4 = InlineKeyboardButton("📞 सपोर्ट / ॲडमिन", callback_data="support")
@@ -505,7 +508,7 @@ def callback_query(call):
             bot.send_message(chat_id, alert_msg, parse_mode="Markdown")
             return
 
-        bot.send_message(chat_id, "🔍 *Setup 2 स्कॅन करत आहे (Nifty, BankNifty & Stocks)... कृपया १५-२० सेकंद थांबा...*", parse_mode="Markdown")
+        bot.send_message(chat_id, "🔍 *Setup 2 स्कॅन करत आहे... कृपया १५-२० सेकंद थांबा...*", parse_mode="Markdown")
         setup2_result = scan_setup_2()
         bot.send_message(chat_id, setup2_result, parse_mode="Markdown")
         
@@ -525,7 +528,7 @@ def callback_query(call):
         text = (
             "📚 *आपल्या स्ट्रॅटेजीज:*\n\n"
             "🟢 **O=L / O=H:** Open आणि Low समान असल्यास Buy, High समान असल्यास Sell.\n\n"
-            "🔥 **Setup 2 (Pro):** पहिल्या ५-मिनिट कॅन्डलच्या ५०% झोनमध्ये दुसरी कॅन्डल क्लोज झाली की **'READY'** अलर्ट मिळतो. आणि त्याचा हाय/लो ब्रेक झाला की **'BUY/SELL'** सिग्नल!"
+            "🔥 **Setup 2:** पहिल्या ५-मिनिट कॅन्डलच्या झोनमध्ये दुसरी कॅन्डल क्लोज झाली की **'READY'** अलर्ट मिळतो. आणि त्याचा हाय/लो ब्रेक झाला की **'BUY/SELL'** सिग्नल मिळतो!"
         )
         bot.send_message(chat_id, text, parse_mode="Markdown")
         
