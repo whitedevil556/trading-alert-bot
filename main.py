@@ -27,8 +27,9 @@ ANGEL_TOTP_KEY = "KU4BY7F74REXTA7T2BKFINN55E"
 SUPABASE_URL = "https://nithcddmdlzudauvcoxy.supabase.co"
 SUPABASE_KEY = "sb_publishable_KuHxRULppKuRsJgvbRssBA_mwoFxqtd"
 
-# 🟢 Global Alert Switch (Default: True)
+# 🟢 Global Alert Switch & Thread Lock
 AUTO_ALERTS_ENABLED = True
+scan_lock = threading.Lock() # 🔒 मल्टीपल युजर्ससाठी थ्रेड लॉक
 
 bot = telebot.TeleBot(TELEGRAM_TOKEN)
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
@@ -38,6 +39,26 @@ IST = datetime.timezone(datetime.timedelta(hours=5, minutes=30))
 
 def get_ist_now():
     return datetime.datetime.now(IST)
+
+# ==========================================
+# 🔁 API डेटा री-ट्राय व AB1021 हँडलर
+# ==========================================
+def fetch_candle_data_with_retry(obj, historicParam, retries=3):
+    """AB1021 Too Many Requests एरर आल्यास १ सेकंद थांबून री-ट्राय करतो"""
+    for attempt in range(retries):
+        try:
+            resp = obj.getCandleData(historicParam)
+            if resp and isinstance(resp, dict):
+                if resp.get('status') is True and 'data' in resp and resp['data']:
+                    return resp['data']
+                # 🛑 जर Rate Limit (AB1021) आला तर १ सेकंद थांबा
+                elif resp.get('errorcode') == 'AB1021' or 'Too many requests' in str(resp.get('message')):
+                    time.sleep(1.0)
+                    continue
+        except Exception:
+            pass
+        time.sleep(0.35)
+    return None
 
 # ==========================================
 # ⏰ मार्केट टाइमिंग चेकर
@@ -91,7 +112,7 @@ def save_subscriber(chat_id, name, phone):
         return 0
 
 # ==========================================
-# 🟢 O=L / O=H कॅशे मेमरी (Memory Cache)
+# 🟢 O=L / O=H & Setup 2 कॅशे मेमरी (Memory Cache)
 # ==========================================
 CACHED_OL_RESULTS = {
     "date": None,
@@ -100,86 +121,98 @@ CACHED_OL_RESULTS = {
     "bearish": None
 }
 
+CACHED_SETUP2_RESULTS = {
+    "date": None,
+    "report": None
+}
+
 # ==========================================
 # 📈 ३. स्कॅनर इंजिन - १ (Open = Low / Open = High)
 # ==========================================
 def get_angel_scan_results(interval="FIVE_MINUTE", from_time="09:15", to_time="09:20", force_refresh=False):
-    global CACHED_OL_RESULTS
+    global CACHED_OL_RESULTS, scan_lock
     
     today_str = get_ist_now().strftime('%Y-%m-%d')
     
+    # ⚡ १. कॅशे चेक (Cache First)
     if not force_refresh and CACHED_OL_RESULTS["date"] == today_str and CACHED_OL_RESULTS["interval"] == "FIVE_MINUTE":
         if CACHED_OL_RESULTS["bullish"] is not None:
-            print("⚡ [Cache Used] सेव्ह केलेला ५-मिनिटांचा डेटा वापरत आहे...")
             return CACHED_OL_RESULTS["bullish"], CACHED_OL_RESULTS["bearish"]
 
-    print("🌐 [API Live Fetch] सर्व्हरवरून नवीन डेटा आणत आहे...")
-    obj = SmartConnect(api_key=ANGEL_API_KEY)
-    try:
-        totp = pyotp.TOTP(ANGEL_TOTP_KEY).now() if ANGEL_TOTP_KEY else ""
-        login_data = obj.generateSession(ANGEL_CLIENT_ID, ANGEL_PASSWORD, totp)
-        if not (login_data and login_data.get('status')):
-            return None, None
-    except Exception:
-        return None, None
+    # 🔒 मल्टीपल युजर्ससाठी लॉक वापरणे जेणेकरून एकाच वेळी २ स्कॅन चालणार नाहीत
+    with scan_lock:
+        # पुन्हा एकदा लॉक मिळाल्यावर कॅशे चेक
+        if not force_refresh and CACHED_OL_RESULTS["date"] == today_str and CACHED_OL_RESULTS["interval"] == "FIVE_MINUTE":
+            if CACHED_OL_RESULTS["bullish"] is not None:
+                return CACHED_OL_RESULTS["bullish"], CACHED_OL_RESULTS["bearish"]
 
-    NIFTY_STOCKS_ANGEL = {
-        'HDFCBANK': '1333', 'ICICIBANK': '4963', 'AXISBANK': '5900', 'SBIN': '3045', 
-        'KOTAKBANK': '1922', 'INDUSINDBK': '5258', 'AUBANK': '21238', 'BANDHANBNK': '2263', 
-        'FEDERALBNK': '1023', 'IDFCFIRSTB': '11184', 'PNB': '10666', 'BOB': '4668',
-        'RELIANCE': '2885', 'INFY': '1594', 'TCS': '11536', 'ITC': '1660', 'LT': '11483', 
-        'BHARTIARTL': '10604', 'TATAMOTORS': '3456', 'M&M': '2031', 'NTPC': '11630', 
-        'TITAN': '3506', 'HCLTECH': '7229', 'SUNPHARMA': '3351', 'MARUTI': '10999', 
-        'ULTRACEMCO': '11532', 'ASIANPAINT': '236', 'BAJFINANCE': '317', 'BAJAJFINSV': '16675', 
-        'HINDUNILVR': '1394', 'WIPRO': '3787', 'TATASTEEL': '3499', 'POWERGRID': '14977', 
-        'BAJAJ-AUTO': '16669', 'TECHM': '13538', 'HINDALCO': '1363', 'GRASIM': '1232', 
-        'ONGC': '2475', 'ADANIENT': '25', 'ADANIPORTS': '15083', 'COALINDIA': '20374', 
-        'BPCL': '526', 'BRITANNIA': '547', 'DRREDDY': '881', 'EICHERMOT': '910', 
-        'DIVISLAB': '10940', 'APOLLOHOSP': '157', 'HEROMOTOCO': '1348', 'CIPLA': '694', 
-        'HDFCLIFE': '467', 'SBILIFE': '21808', 'TATACONSUM': '3432', 'JSWSTEEL': '11723'
-    }
-
-    from_date_time = f"{today_str} {from_time}"
-    to_date_time = f"{today_str} {to_time}"
-
-    bullish_stocks = []
-    bearish_stocks = []
-
-    for symbol, token in NIFTY_STOCKS_ANGEL.items():
+        print("🌐 [API Live Fetch] सर्व्हरवरून नवीन O=L डेटा आणत आहे...")
+        obj = SmartConnect(api_key=ANGEL_API_KEY)
         try:
-            time.sleep(0.4)
-            historicParam = {
-                "exchange": "NSE",
-                "symboltoken": token,
-                "interval": interval,
-                "fromdate": from_date_time,
-                "todate": to_date_time
-            }
-            resp = obj.getCandleData(historicParam)
-            if not resp or 'data' not in resp or not resp['data']:
-                continue
-                
-            candle = resp['data'][0]
-            open_p = round(float(candle[1]), 2)
-            high_p = round(float(candle[2]), 2)
-            low_p = round(float(candle[3]), 2)
-
-            if open_p == low_p:
-                bullish_stocks.append({'symbol': symbol, 'open': open_p, 'high': high_p, 'low': low_p})
-            elif open_p == high_p:
-                bearish_stocks.append({'symbol': symbol, 'open': open_p, 'high': high_p, 'low': low_p})
+            totp = pyotp.TOTP(ANGEL_TOTP_KEY).now() if ANGEL_TOTP_KEY else ""
+            login_data = obj.generateSession(ANGEL_CLIENT_ID, ANGEL_PASSWORD, totp)
+            if not (login_data and login_data.get('status')):
+                return None, None
         except Exception:
-            continue
+            return None, None
 
-    if interval == "FIVE_MINUTE":
-        CACHED_OL_RESULTS["date"] = today_str
-        CACHED_OL_RESULTS["interval"] = "FIVE_MINUTE"
-        CACHED_OL_RESULTS["bullish"] = bullish_stocks
-        CACHED_OL_RESULTS["bearish"] = bearish_stocks
+        NIFTY_STOCKS_ANGEL = {
+            'HDFCBANK': '1333', 'ICICIBANK': '4963', 'AXISBANK': '5900', 'SBIN': '3045', 
+            'KOTAKBANK': '1922', 'INDUSINDBK': '5258', 'AUBANK': '21238', 'BANDHANBNK': '2263', 
+            'FEDERALBNK': '1023', 'IDFCFIRSTB': '11184', 'PNB': '10666', 'BOB': '4668',
+            'RELIANCE': '2885', 'INFY': '1594', 'TCS': '11536', 'ITC': '1660', 'LT': '11483', 
+            'BHARTIARTL': '10604', 'TATAMOTORS': '3456', 'M&M': '2031', 'NTPC': '11630', 
+            'TITAN': '3506', 'HCLTECH': '7229', 'SUNPHARMA': '3351', 'MARUTI': '10999', 
+            'ULTRACEMCO': '11532', 'ASIANPAINT': '236', 'BAJFINANCE': '317', 'BAJAJFINSV': '16675', 
+            'HINDUNILVR': '1394', 'WIPRO': '3787', 'TATASTEEL': '3499', 'POWERGRID': '14977', 
+            'BAJAJ-AUTO': '16669', 'TECHM': '13538', 'HINDALCO': '1363', 'GRASIM': '1232', 
+            'ONGC': '2475', 'ADANIENT': '25', 'ADANIPORTS': '15083', 'COALINDIA': '20374', 
+            'BPCL': '526', 'BRITANNIA': '547', 'DRREDDY': '881', 'EICHERMOT': '910', 
+            'DIVISLAB': '10940', 'APOLLOHOSP': '157', 'HEROMOTOCO': '1348', 'CIPLA': '694', 
+            'HDFCLIFE': '467', 'SBILIFE': '21808', 'TATACONSUM': '3432', 'JSWSTEEL': '11723'
+        }
 
-    return bullish_stocks, bearish_stocks
+        from_date_time = f"{today_str} {from_time}"
+        to_date_time = f"{today_str} {to_time}"
 
-# 🟢 रिपोर्टींग फंक्शन
+        bullish_stocks = []
+        bearish_stocks = []
+
+        for symbol, token in NIFTY_STOCKS_ANGEL.items():
+            try:
+                time.sleep(0.35) # Safe API rate delay
+                historicParam = {
+                    "exchange": "NSE",
+                    "symboltoken": token,
+                    "interval": interval,
+                    "fromdate": from_date_time,
+                    "todate": to_date_time
+                }
+                
+                candles = fetch_candle_data_with_retry(obj, historicParam, retries=3)
+                if not candles:
+                    continue
+                    
+                candle = candles[0]
+                open_p = round(float(candle[1]), 2)
+                high_p = round(float(candle[2]), 2)
+                low_p = round(float(candle[3]), 2)
+
+                if abs(open_p - low_p) <= 0.05:
+                    bullish_stocks.append({'symbol': symbol, 'open': open_p, 'high': high_p, 'low': low_p})
+                elif abs(open_p - high_p) <= 0.05:
+                    bearish_stocks.append({'symbol': symbol, 'open': open_p, 'high': high_p, 'low': low_p})
+            except Exception:
+                continue
+
+        if interval == "FIVE_MINUTE":
+            CACHED_OL_RESULTS["date"] = today_str
+            CACHED_OL_RESULTS["interval"] = "FIVE_MINUTE"
+            CACHED_OL_RESULTS["bullish"] = bullish_stocks
+            CACHED_OL_RESULTS["bearish"] = bearish_stocks
+
+        return bullish_stocks, bearish_stocks
+
 def send_scan_report(chat_id, force_refresh=False):
     now_ist = get_ist_now()
     now_time = now_ist.strftime("%H:%M")
@@ -218,136 +251,157 @@ def send_scan_report(chat_id, force_refresh=False):
 # ==========================================
 # 🧠 ७. स्कॅनर इंजिन - २ (Setup 2)
 # ==========================================
-def scan_setup_2():
-    obj = SmartConnect(api_key=ANGEL_API_KEY)
-    try:
-        totp = pyotp.TOTP(ANGEL_TOTP_KEY).now() if ANGEL_TOTP_KEY else ""
-        login_data = obj.generateSession(ANGEL_CLIENT_ID, ANGEL_PASSWORD, totp)
-        if not (login_data and login_data.get('status')):
-            return "❌ सर्व्हर कनेक्टिव्हिटी एरर"
-    except Exception:
-        return "❌ सर्व्हर कनेक्टिव्हिटी एरर"
-
-    WATCHLIST = {
-        'NIFTY 50': '26000', 
-        'BANKNIFTY': '26009',
-        'HDFCBANK': '1333', 'ICICIBANK': '4963', 'AXISBANK': '5900', 'SBIN': '3045', 
-        'KOTAKBANK': '1922', 'INDUSINDBK': '5258', 'AUBANK': '21238', 'BANDHANBNK': '2263', 
-        'FEDERALBNK': '1023', 'IDFCFIRSTB': '11184', 'PNB': '10666', 'BOB': '4668',
-        'RELIANCE': '2885', 'INFY': '1594', 'TCS': '11536', 'ITC': '1660', 'LT': '11483', 
-        'BHARTIARTL': '10604', 'TATAMOTORS': '3456', 'M&M': '2031', 'NTPC': '11630', 
-        'TITAN': '3506', 'HCLTECH': '7229', 'SUNPHARMA': '3351', 'MARUTI': '10999', 
-        'ULTRACEMCO': '11532', 'ASIANPAINT': '236', 'BAJFINANCE': '317', 'BAJAJFINSV': '16675', 
-        'HINDUNILVR': '1394', 'WIPRO': '3787', 'TATASTEEL': '3499', 'POWERGRID': '14977', 
-        'BAJAJ-AUTO': '16669', 'TECHM': '13538', 'HINDALCO': '1363', 'GRASIM': '1232', 
-        'ONGC': '2475', 'ADANIENT': '25', 'ADANIPORTS': '15083', 'COALINDIA': '20374', 
-        'BPCL': '526', 'BRITANNIA': '547', 'DRREDDY': '881', 'EICHERMOT': '910', 
-        'DIVISLAB': '10940', 'APOLLOHOSP': '157', 'HEROMOTOCO': '1348', 'CIPLA': '694', 
-        'HDFCLIFE': '467', 'SBILIFE': '21808', 'TATACONSUM': '3432', 'JSWSTEEL': '11723'
-    }
-
+def scan_setup_2(force_refresh=False):
+    global CACHED_SETUP2_RESULTS, scan_lock
+    
     now_ist = get_ist_now()
     today_str = now_ist.strftime('%Y-%m-%d')
     now_time = now_ist.strftime('%H:%M')
-    
-    from_date_time = f"{today_str} 09:15"
-    to_date_time = f"{today_str} {now_time}"
 
-    report_text = f"🔥 **Setup 2 - Live Radar** 🔥\n🕒 Timeframe: 5 Min\n\n"
-    found_setups = 0
+    if not force_refresh and CACHED_SETUP2_RESULTS["date"] == today_str and CACHED_SETUP2_RESULTS["report"] is not None:
+        return CACHED_SETUP2_RESULTS["report"]
 
-    for symbol, token in WATCHLIST.items():
+    with scan_lock:
+        if not force_refresh and CACHED_SETUP2_RESULTS["date"] == today_str and CACHED_SETUP2_RESULTS["report"] is not None:
+            return CACHED_SETUP2_RESULTS["report"]
+
+        obj = SmartConnect(api_key=ANGEL_API_KEY)
         try:
-            time.sleep(0.4)
+            totp = pyotp.TOTP(ANGEL_TOTP_KEY).now() if ANGEL_TOTP_KEY else ""
+            login_data = obj.generateSession(ANGEL_CLIENT_ID, ANGEL_PASSWORD, totp)
+            if not (login_data and login_data.get('status')):
+                return "❌ सर्व्हर कनेक्टिव्हिटी एरर"
+        except Exception:
+            return "❌ सर्व्हर कनेक्टिव्हिटी एरर"
 
-            historicParam = {
-                "exchange": "NSE",
-                "symboltoken": token,
-                "interval": "FIVE_MINUTE",
-                "fromdate": from_date_time,
-                "todate": to_date_time
-            }
-            resp = obj.getCandleData(historicParam)
-            if not resp or 'data' not in resp or len(resp['data']) < 2:
-                continue
-            
-            data = resp['data']
-            f_candle = data[0]
-            f_open, f_high, f_low, f_close = round(float(f_candle[1]), 2), round(float(f_candle[2]), 2), round(float(f_candle[3]), 2), round(float(f_candle[4]), 2)
-            
-            # 🟢 STRICT RULE: पहिली कॅन्डल O=L किंवा O=H असलीच पाहिजे!
-            is_bullish_first = (f_open == f_low)
-            is_bearish_first = (f_open == f_high)
-            
-            if not (is_bullish_first or is_bearish_first):
-                continue # जर अट पूर्ण होत नसेल, तर स्टॉक स्कॅन करू नका
+        WATCHLIST = {
+            'NIFTY 50': '26000', 
+            'BANKNIFTY': '26009',
+            'HDFCBANK': '1333', 'ICICIBANK': '4963', 'AXISBANK': '5900', 'SBIN': '3045', 
+            'KOTAKBANK': '1922', 'INDUSINDBK': '5258', 'AUBANK': '21238', 'BANDHANBNK': '2263', 
+            'FEDERALBNK': '1023', 'IDFCFIRSTB': '11184', 'PNB': '10666', 'BOB': '4668',
+            'RELIANCE': '2885', 'INFY': '1594', 'TCS': '11536', 'ITC': '1660', 'LT': '11483', 
+            'BHARTIARTL': '10604', 'TATAMOTORS': '3456', 'M&M': '2031', 'NTPC': '11630', 
+            'TITAN': '3506', 'HCLTECH': '7229', 'SUNPHARMA': '3351', 'MARUTI': '10999', 
+            'ULTRACEMCO': '11532', 'ASIANPAINT': '236', 'BAJFINANCE': '317', 'BAJAJFINSV': '16675', 
+            'HINDUNILVR': '1394', 'WIPRO': '3787', 'TATASTEEL': '3499', 'POWERGRID': '14977', 
+            'BAJAJ-AUTO': '16669', 'TECHM': '13538', 'HINDALCO': '1363', 'GRASIM': '1232', 
+            'ONGC': '2475', 'ADANIENT': '25', 'ADANIPORTS': '15083', 'COALINDIA': '20374', 
+            'BPCL': '526', 'BRITANNIA': '547', 'DRREDDY': '881', 'EICHERMOT': '910', 
+            'DIVISLAB': '10940', 'APOLLOHOSP': '157', 'HEROMOTOCO': '1348', 'CIPLA': '694', 
+            'HDFCLIFE': '467', 'SBILIFE': '21808', 'TATACONSUM': '3432', 'JSWSTEEL': '11723'
+        }
+        
+        from_date_time = f"{today_str} 09:15"
+        to_date_time = f"{today_str} {now_time}"
 
-            f_range = f_high - f_low
-            if f_range <= 0:
-                continue
+        report_text = f"🔥 **Setup 2 - Live Radar** 🔥\n🕒 Timeframe: 5 Min\n\n"
+        found_setups = 0
 
-            f_mid = f_low + (f_range * 0.50)
-            
-            setup_active = True
-            daily_signal_fired = False
-            inside_count = 0
-            trigger_high = f_high
-            trigger_low = f_low
-            
-            stock_status = ""
+        for symbol, token in WATCHLIST.items():
+            try:
+                time.sleep(0.35)
 
-            for i in range(1, len(data)):
-                c_candle = data[i]
-                c_time = c_candle[0].split("T")[1][:5]
-                c_open, c_high, c_low, c_close = round(float(c_candle[1]), 2), round(float(c_candle[2]), 2), round(float(c_candle[3]), 2), round(float(c_candle[4]), 2)
+                historicParam = {
+                    "exchange": "NSE",
+                    "symboltoken": token,
+                    "interval": "FIVE_MINUTE",
+                    "fromdate": from_date_time,
+                    "todate": to_date_time
+                }
                 
-                # १. जर आधीच READY अलर्ट बनला असेल, तर ब्रेकआऊट तपासणे
-                if setup_active and inside_count >= 1:
-                    if is_bullish_first and c_high > trigger_high:
-                        stock_status = f"🚀 **BUY Triggered** @ {c_time} (> ₹{trigger_high:.2f})"
-                        daily_signal_fired = True
-                        break
-                    elif is_bearish_first and c_low < trigger_low:
-                        stock_status = f"🩸 **SELL Triggered** @ {c_time} (< ₹{trigger_low:.2f})"
-                        daily_signal_fired = True
-                        break
-
-                if not setup_active:
+                data = fetch_candle_data_with_retry(obj, historicParam, retries=3)
+                if not data or len(data) < 2:
+                    continue
+                
+                f_candle = data[0]
+                f_open, f_high, f_low, f_close = round(float(f_candle[1]), 2), round(float(f_candle[2]), 2), round(float(f_candle[3]), 2), round(float(f_candle[4]), 2)
+                
+                is_bullish_first = (abs(f_open - f_low) <= 0.05)
+                is_bearish_first = (abs(f_open - f_high) <= 0.05)
+                
+                if not (is_bullish_first or is_bearish_first):
                     continue
 
-                # २. योग्य झोनमधील इनसाईड कॅन्डल तपासणे
-                body_max = max(c_open, c_close)
-                body_min = min(c_open, c_close)
-                
-                body_in_upper_half = (body_min >= f_mid)
-                body_in_lower_half = (body_max <= f_mid)
-                
-                is_inside_valid = (is_bullish_first and body_in_upper_half) or (is_bearish_first and body_in_lower_half)
-                
-                if is_inside_valid:
-                    inside_count += 1
-                    trigger_high = max(trigger_high, c_high)
-                    trigger_low = min(trigger_low, c_low)
-                    stock_status = f"⚠️ **READY** @ {c_time} (Watch H: ₹{trigger_high:.2f} / L: ₹{trigger_low:.2f})"
-                else:
-                    if inside_count >= 1 and not daily_signal_fired:
-                        stock_status = f"❌ **Setup Cancelled** @ {c_time} (Zone Break)"
-                    setup_active = False
+                f_range = f_high - f_low
+                if f_range <= 0:
+                    continue
 
-            if stock_status != "":
-                report_text += f"🔸 **{symbol}:** {stock_status}\n"
-                found_setups += 1
+                f_mid = f_low + (f_range * 0.50)
+                
+                setup_active = True
+                daily_signal_fired = False
+                inside_count = 0
+                trigger_high = f_high
+                trigger_low = f_low
+                
+                stock_status = ""
+
+                for i in range(1, len(data)):
+                    c_candle = data[i]
+                    c_time = c_candle[0].split("T")[1][:5]
+                    c_open, c_high, c_low, c_close = round(float(c_candle[1]), 2), round(float(c_candle[2]), 2), round(float(c_candle[3]), 2), round(float(c_candle[4]), 2)
+                    
+                    if setup_active and inside_count >= 1:
+                        if is_bullish_first and c_high > trigger_high:
+                            stock_status = f"🟢 🚀 **BUY Triggered** @ {c_time} (> ₹{trigger_high:.2f})"
+                            daily_signal_fired = True
+                            break
+                        elif is_bearish_first and c_low < trigger_low:
+                            stock_status = f"🔴 🩸 **SELL Triggered** @ {c_time} (< ₹{trigger_low:.2f})"
+                            daily_signal_fired = True
+                            break
+
+                    if not setup_active:
+                        continue
+
+                    body_max = max(c_open, c_close)
+                    body_min = min(c_open, c_close)
+                    
+                    body_in_upper_half = (body_min >= f_mid)
+                    body_in_lower_half = (body_max <= f_mid)
+                    
+                    is_inside_valid = (is_bullish_first and body_in_upper_half) or (is_bearish_first and body_in_lower_half)
+                    
+                    if is_inside_valid:
+                        inside_count += 1
+                        trigger_high = max(trigger_high, c_high)
+                        trigger_low = min(trigger_low, c_low)
+                        stock_status = f"⚠️ **READY** @ {c_time} (Watch H: ₹{trigger_high:.2f} / L: ₹{trigger_low:.2f})"
+                    else:
+                        if inside_count >= 1 and not daily_signal_fired:
+                            stock_status = f"❌ **Setup Cancelled** @ {c_time} (Zone Break)"
+                        setup_active = False
+
+                if stock_status != "":
+                    report_text += f"🔸 **{symbol}:** {stock_status}\n"
+                    found_setups += 1
+                
+            except Exception:
+                continue
+                
+        if found_setups == 0:
+            report_text += "⚪ सध्या कोणत्याही स्टॉकमध्ये 'Setup 2' बनलेला नाही."
             
-        except Exception:
-            continue
+        CACHED_SETUP2_RESULTS["date"] = today_str
+        CACHED_SETUP2_RESULTS["report"] = report_text
             
-    if found_setups == 0:
-        report_text += "⚪ सध्या कोणत्याही स्टॉकमध्ये 'Setup 2' बनलेला नाही."
-        
-    return report_text
+        return report_text
+
+def send_setup2_report_to_user(chat_id, force_refresh=False):
+    if force_refresh:
+        bot.send_message(chat_id, "🔄 *ताजा (Fresh Live) डेटा मागवत आहे... कृपया ३० सेकंद थांबा...*", parse_mode="Markdown")
+    
+    report_text = scan_setup_2(force_refresh)
+    
+    refresh_markup = InlineKeyboardMarkup()
+    btn_ref = InlineKeyboardButton("🔄 ताजे रिफ्रेश (Setup 2)", callback_data="force_scan_setup2")
+    refresh_markup.add(btn_ref)
+    
+    bot.send_message(chat_id, report_text, parse_mode="Markdown", reply_markup=refresh_markup)
 
 # ==========================================
-# ⏰ ४. ऑटो-अलर्ट शेड्यूलर (सकाळी ९:१६ आणि ९:२१)
+# ⏰ ४. ऑटो-अलर्ट शेड्यूलर (सकाळी ९:१६:०४ आणि ९:२१:०४)
 # ==========================================
 def send_auto_scan_job(title_prefix, interval_type, from_t, to_t):
     global AUTO_ALERTS_ENABLED
@@ -360,7 +414,7 @@ def send_auto_scan_job(title_prefix, interval_type, from_t, to_t):
     if not subs:
         return
 
-    bullish, bearish = get_angel_scan_results(interval=interval_type, from_time=from_t, to_time=to_t)
+    bullish, bearish = get_angel_scan_results(interval=interval_type, from_time=from_t, to_time=to_t, force_refresh=True)
     if bullish is None:
         bot.send_message(ADMIN_CHAT_ID, f"❌ **[{title_prefix} Error]** मार्केट डेटा फेच करू शकलो नाही.")
         return
@@ -398,10 +452,10 @@ def scan_916_early():
 def scan_921_confirmed():
     send_auto_scan_job("📊 ५-मिनिट ऑटो-अलर्ट (५-मिनिट O=L)", "FIVE_MINUTE", "09:15", "09:20")
 
-# 🟢 Scheduler Setup
+# 🟢 Scheduler Setup (कॅन्डल क्लोज झाल्यावर ४थ्या सेकंदाला ऑटो-स्कॅन)
 scheduler = BackgroundScheduler(timezone="Asia/Kolkata")
-scheduler.add_job(scan_916_early, 'cron', day_of_week='mon-fri', hour=9, minute=16, second=15)
-scheduler.add_job(scan_921_confirmed, 'cron', day_of_week='mon-fri', hour=9, minute=21, second=15)
+scheduler.add_job(scan_916_early, 'cron', day_of_week='mon-fri', hour=9, minute=16, second=4)
+scheduler.add_job(scan_921_confirmed, 'cron', day_of_week='mon-fri', hour=9, minute=21, second=4)
 scheduler.start()
 
 # ==========================================
@@ -508,10 +562,19 @@ def callback_query(call):
             bot.send_message(chat_id, alert_msg, parse_mode="Markdown")
             return
 
-        bot.send_message(chat_id, "🔍 *Setup 2 स्कॅन करत आहे... कृपया १५-२० सेकंद थांबा...*", parse_mode="Markdown")
-        setup2_result = scan_setup_2()
-        bot.send_message(chat_id, setup2_result, parse_mode="Markdown")
+        if not CACHED_SETUP2_RESULTS["report"]:
+            bot.send_message(chat_id, "🔍 *Setup 2 स्कॅन करत आहे... कृपया १५-२० सेकंद थांबा...*", parse_mode="Markdown")
+            
+        send_setup2_report_to_user(chat_id, force_refresh=False)
         
+    elif call.data == "force_scan_setup2":
+        is_ready, alert_msg = is_market_ready_for_scan()
+        if not is_ready:
+            bot.send_message(chat_id, alert_msg, parse_mode="Markdown")
+            return
+
+        send_setup2_report_to_user(chat_id, force_refresh=True)
+
     elif call.data == "subscribe":
         markup = ReplyKeyboardMarkup(one_time_keyboard=True, resize_keyboard=True)
         btn = KeyboardButton("📱 मोबाईल नंबर शेअर करा", request_contact=True)
